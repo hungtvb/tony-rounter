@@ -1,10 +1,27 @@
-import type { FastifyError, FastifyReply } from 'fastify';
+import type { FastifyReply } from 'fastify';
 
 export interface GatewayErrorPayload {
   readonly error: {
     readonly code: string;
     readonly message: string;
     readonly request_id: string;
+  };
+}
+
+interface ErrorMetadata {
+  readonly code?: string;
+  readonly statusCode?: number;
+}
+
+function errorMetadata(error: unknown): ErrorMetadata {
+  if (typeof error !== 'object' || error === null) return {};
+
+  const candidate = error as Readonly<Record<string, unknown>>;
+  return {
+    ...(typeof candidate.code === 'string' ? { code: candidate.code } : {}),
+    ...(typeof candidate.statusCode === 'number'
+      ? { statusCode: candidate.statusCode }
+      : {}),
   };
 }
 
@@ -26,12 +43,17 @@ export function sendGatewayError(
   return reply.code(statusCode).send(payload);
 }
 
-export function normalizeFastifyError(error: FastifyError): {
+export function normalizeFastifyError(error: unknown): {
   readonly statusCode: number;
   readonly code: string;
   readonly message: string;
 } {
-  if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE' || error.statusCode === 413) {
+  const metadata = errorMetadata(error);
+
+  if (
+    metadata.code === 'FST_ERR_CTP_BODY_TOO_LARGE' ||
+    metadata.statusCode === 413
+  ) {
     return {
       statusCode: 413,
       code: 'payload_too_large',
@@ -40,8 +62,8 @@ export function normalizeFastifyError(error: FastifyError): {
   }
 
   if (
-    error.code === 'FST_ERR_CTP_INVALID_JSON_BODY' ||
-    (error instanceof SyntaxError && error.statusCode === 400)
+    metadata.code === 'FST_ERR_CTP_INVALID_JSON_BODY' ||
+    (error instanceof SyntaxError && metadata.statusCode === 400)
   ) {
     return {
       statusCode: 400,
@@ -50,7 +72,7 @@ export function normalizeFastifyError(error: FastifyError): {
     };
   }
 
-  if (error.statusCode === 415) {
+  if (metadata.statusCode === 415) {
     return {
       statusCode: 415,
       code: 'unsupported_media_type',
@@ -58,7 +80,7 @@ export function normalizeFastifyError(error: FastifyError): {
     };
   }
 
-  if (error.statusCode === 400) {
+  if (metadata.statusCode === 400) {
     return {
       statusCode: 400,
       code: 'bad_request',
