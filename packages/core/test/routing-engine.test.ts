@@ -6,6 +6,8 @@ import {
   RoutingEngine,
   RoutingSelectionError,
   selectRoute,
+  type RouteCandidateTrace,
+  type RouteRejectionCode,
 } from '../src/index.js';
 
 const CONFIG = parseRoutingConfig(`
@@ -88,6 +90,21 @@ const NO_REQUIREMENTS = {
   structuredOutput: false,
 } as const;
 
+function candidate(
+  candidates: readonly RouteCandidateTrace[],
+  routeId: string,
+): RouteCandidateTrace {
+  const found = candidates.find((entry) => entry.routeId === routeId);
+  if (!found) throw new Error(`Missing candidate ${routeId}`);
+  return found;
+}
+
+function rejectionCodes(
+  routeCandidate: RouteCandidateTrace,
+): readonly RouteRejectionCode[] {
+  return routeCandidate.rejections.map((rejection) => rejection.code);
+}
+
 describe('selectRoute', () => {
   it('never allows an incompatible high-priority route to win', () => {
     const decision = selectRoute(CONFIG, {
@@ -103,19 +120,16 @@ describe('selectRoute', () => {
       upstreamModel: 'context-model',
       affinityRetained: false,
     });
-    expect(
-      decision.candidates.find((candidate) => candidate.routeId === 'cheap'),
-    ).toMatchObject({
-      accepted: false,
-      rejections: expect.arrayContaining([
-        { code: 'missing_tools', required: true, actual: false },
-        {
-          code: 'missing_structured_output',
-          required: true,
-          actual: false,
-        },
-      ]),
-    });
+    const cheap = candidate(decision.candidates, 'cheap');
+    expect(cheap.accepted).toBe(false);
+    expect(cheap.rejections).toEqual([
+      { code: 'missing_tools', required: true, actual: false },
+      {
+        code: 'missing_structured_output',
+        required: true,
+        actual: false,
+      },
+    ]);
   });
 
   it('accepts exact context boundaries and rejects one token beyond them', () => {
@@ -136,9 +150,7 @@ describe('selectRoute', () => {
       },
     });
     expect(beyond.selected?.routeId).toBe('alpha');
-    expect(
-      beyond.candidates.find((candidate) => candidate.routeId === 'context'),
-    ).toMatchObject({
+    expect(candidate(beyond.candidates, 'context')).toMatchObject({
       accepted: false,
       rejections: [
         {
@@ -222,7 +234,7 @@ describe('selectRoute', () => {
       },
     });
 
-    expect(decision.candidates.map((candidate) => candidate.routeId)).toEqual([
+    expect(decision.candidates.map((entry) => entry.routeId)).toEqual([
       'alpha',
       'beta',
       'cheap',
@@ -230,29 +242,23 @@ describe('selectRoute', () => {
       'disabled',
       'outside',
     ]);
+    expect(rejectionCodes(candidate(decision.candidates, 'outside'))).toEqual([
+      'not_in_profile',
+    ]);
     expect(
-      decision.candidates.find((candidate) => candidate.routeId === 'outside'),
-    ).toMatchObject({ rejections: [{ code: 'not_in_profile' }] });
-    expect(
-      decision.candidates.find((candidate) => candidate.routeId === 'disabled'),
-    ).toMatchObject({
-      rejections: expect.arrayContaining([{ code: 'route_disabled' }]),
-    });
-    expect(
-      decision.candidates.find((candidate) => candidate.routeId === 'alpha'),
-    ).toMatchObject({ rejections: [{ code: 'route_unhealthy' }] });
-    expect(
-      decision.candidates.find((candidate) => candidate.routeId === 'beta'),
-    ).toMatchObject({ rejections: [{ code: 'route_unavailable' }] });
-    expect(
-      decision.candidates.find((candidate) => candidate.routeId === 'context'),
-    ).toMatchObject({
-      rejections: expect.arrayContaining([
-        { code: 'missing_parallel_tool_calls', required: true, actual: false },
-        { code: 'missing_vision', required: true, actual: false },
-        { code: 'insufficient_context', required: 100_000, actual: 64_000 },
-      ]),
-    });
+      rejectionCodes(candidate(decision.candidates, 'disabled')),
+    ).toContain('route_disabled');
+    expect(rejectionCodes(candidate(decision.candidates, 'alpha'))).toEqual([
+      'route_unhealthy',
+    ]);
+    expect(rejectionCodes(candidate(decision.candidates, 'beta'))).toEqual([
+      'route_unavailable',
+    ]);
+    expect(candidate(decision.candidates, 'context').rejections).toEqual([
+      { code: 'missing_parallel_tool_calls', required: true, actual: false },
+      { code: 'missing_vision', required: true, actual: false },
+      { code: 'insufficient_context', required: 100_000, actual: 64_000 },
+    ]);
   });
 
   it('returns no selected route when every candidate is rejected', () => {
@@ -263,9 +269,7 @@ describe('selectRoute', () => {
     });
 
     expect(decision.selected).toBeUndefined();
-    expect(decision.candidates.every((candidate) => !candidate.accepted)).toBe(
-      true,
-    );
+    expect(decision.candidates.every((entry) => !entry.accepted)).toBe(true);
   });
 
   it('is deterministic for identical config, requirements, and state', () => {
