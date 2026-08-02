@@ -223,7 +223,9 @@ export class CircuitBreakerRegistry {
   }
 
   reset(keyInput: CircuitKey): void {
-    this.#circuits.delete(serializedKey(normalizeKey(keyInput)));
+    const id = serializedKey(normalizeKey(keyInput));
+    this.#circuits.delete(id);
+    this.#invalidatePermits(id);
   }
 
   clear(): void {
@@ -232,13 +234,22 @@ export class CircuitBreakerRegistry {
   }
 
   #circuit(id: string): MutableCircuit {
-    return (
-      this.#circuits.get(id) ?? {
-        state: 'closed',
-        consecutiveFailures: 0,
-        halfOpenInFlight: 0,
-      }
-    );
+    const existing = this.#circuits.get(id);
+    if (existing) return existing;
+
+    const created: MutableCircuit = {
+      state: 'closed',
+      consecutiveFailures: 0,
+      halfOpenInFlight: 0,
+    };
+    this.#circuits.set(id, created);
+    return created;
+  }
+
+  #invalidatePermits(id: string): void {
+    for (const [token, storedId] of this.#activePermits) {
+      if (storedId === id) this.#activePermits.delete(token);
+    }
   }
 
   #open(circuit: MutableCircuit, now: number): void {
