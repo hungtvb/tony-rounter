@@ -46,28 +46,31 @@ describe('local dashboard', () => {
     expect(response.headers.location).toBe('/ui');
   });
 
-  it('serves a public dashboard shell with restrictive browser headers', async () => {
-    const app = track(
-      buildGateway({ config: config(), logger: createNullLogger() }),
-    );
+  it(
+    'serves a public dashboard shell with restrictive browser headers',
+    async () => {
+      const app = track(
+        buildGateway({ config: config(), logger: createNullLogger() }),
+      );
 
-    const response = await app.inject({ method: 'GET', url: '/ui' });
+      const response = await app.inject({ method: 'GET', url: '/ui' });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['content-type']).toContain('text/html');
-    expect(response.headers['cache-control']).toBe('no-store');
-    expect(response.headers['x-frame-options']).toBe('DENY');
-    expect(response.headers['content-security-policy']).toContain(
-      "default-src 'none'",
-    );
-    expect(response.headers['content-security-policy']).toContain(
-      "connect-src 'self'",
-    );
-    expect(response.body).toContain('Tony Router');
-    expect(response.body).toContain('/ui/styles.css');
-    expect(response.body).toContain('/ui/app.js');
-    expect(response.body).not.toContain(TOKEN);
-  });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('text/html');
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.headers['x-frame-options']).toBe('DENY');
+      expect(response.headers['content-security-policy']).toContain(
+        "default-src 'none'",
+      );
+      expect(response.headers['content-security-policy']).toContain(
+        "connect-src 'self'",
+      );
+      expect(response.body).toContain('Tony Router');
+      expect(response.body).toContain('/ui/styles.css');
+      expect(response.body).toContain('/ui/app.js');
+      expect(response.body).not.toContain(TOKEN);
+    },
+  );
 
   it('serves dashboard assets without exposing the gateway token', async () => {
     const app = track(
@@ -86,26 +89,31 @@ describe('local dashboard', () => {
 
     expect(script.statusCode).toBe(200);
     expect(script.headers['content-type']).toContain('text/javascript');
-    expect(script.body).toContain("sessionStorage.getItem('tony-router-token')");
+    expect(script.body).toContain(
+      "sessionStorage.getItem('tony-router-token')",
+    );
     expect(script.body).toContain("fetch('/v1/models'");
     expect(script.body).toContain("fetch('/v1/chat/completions'");
     expect(script.body).not.toContain(TOKEN);
   });
 
-  it('keeps protected APIs locked even though the dashboard is public', async () => {
-    const app = track(
-      buildGateway({
-        config: config(),
-        logger: createNullLogger(),
-        models: [{ id: 'tony-auto' }],
-      }),
-    );
+  it(
+    'keeps protected APIs locked even though the dashboard is public',
+    async () => {
+      const app = track(
+        buildGateway({
+          config: config(),
+          logger: createNullLogger(),
+          models: [{ id: 'tony-auto' }],
+        }),
+      );
 
-    const response = await app.inject({ method: 'GET', url: '/v1/models' });
+      const response = await app.inject({ method: 'GET', url: '/v1/models' });
 
-    expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({
-      error: { code: 'unauthorized' },
-    });
-  });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({
+        error: { code: 'unauthorized' },
+      });
+    },
+  );
 });
