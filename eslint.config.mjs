@@ -1,13 +1,24 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
+const typeCheckedConfigs = tseslint.configs.recommendedTypeChecked.map(
+  (config) => ({
+    ...config,
+    files: ['**/*.ts'],
+  }),
+);
+
 export default tseslint.config(
   {
     ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**'],
   },
-  js.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
   {
+    ...js.configs.recommended,
+    files: ['**/*.{js,mjs,cjs}'],
+  },
+  ...typeCheckedConfigs,
+  {
+    files: ['**/*.ts'],
     languageOptions: {
       parserOptions: {
         projectService: true,
