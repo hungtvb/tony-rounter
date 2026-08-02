@@ -77,7 +77,11 @@ export class GatewayTelemetry {
 
   constructor(options: GatewayTelemetryOptions = {}) {
     const maxRecords = options.maxRecords ?? DEFAULT_MAX_RECORDS;
-    if (!Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > 10_000) {
+    if (
+      !Number.isSafeInteger(maxRecords) ||
+      maxRecords < 1 ||
+      maxRecords > 10_000
+    ) {
       throw new RangeError('maxRecords must be an integer between 1 and 10000');
     }
 
