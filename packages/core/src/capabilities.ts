@@ -44,7 +44,9 @@ export function deriveRequiredCapabilities(
   );
   const minimumContextTokens = estimatedInputTokens + reservedOutputTokens;
   if (!Number.isSafeInteger(minimumContextTokens)) {
-    throw new RangeError('combined context token requirement exceeds safe integer range');
+    throw new RangeError(
+      'combined context token requirement exceeds safe integer range',
+    );
   }
 
   return Object.freeze({
