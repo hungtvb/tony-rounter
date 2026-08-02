@@ -72,9 +72,7 @@ export class OpenAISseDecoder {
       if (!delimiter) break;
 
       const block = this.#buffer.slice(0, delimiter.index);
-      this.#buffer = this.#buffer.slice(
-        delimiter.index + delimiter[0].length,
-      );
+      this.#buffer = this.#buffer.slice(delimiter.index + delimiter[0].length);
       const data = parseEventBlock(block);
       if (data !== undefined) events.push(data);
     }

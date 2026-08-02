@@ -94,7 +94,10 @@ function createAbortScope(
   };
 }
 
-function endpoint(baseUrl: string, resource: 'models' | 'chat/completions'): string {
+function endpoint(
+  baseUrl: string,
+  resource: 'models' | 'chat/completions',
+): string {
   const url = new URL(`${baseUrl}/`);
   const basePath = url.pathname.replace(/\/+$/, '');
   url.pathname = basePath.endsWith('/v1')
@@ -113,7 +116,10 @@ function safeUpstreamRequestId(response: Response): string | undefined {
     : undefined;
 }
 
-function mappedTransportError(error: unknown, scope: AbortScope): GatewayHttpError {
+function mappedTransportError(
+  error: unknown,
+  scope: AbortScope,
+): GatewayHttpError {
   if (scope.timedOut()) {
     return new GatewayHttpError(
       504,

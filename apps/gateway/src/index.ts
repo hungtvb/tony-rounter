@@ -9,9 +9,7 @@ export type {
 export { GatewayHttpError } from './errors.js';
 export { createJsonLogger, createNullLogger } from './logger.js';
 export type { JsonLogger, JsonLoggerOptions } from './logger.js';
-export {
-  OpenAICompatibleClient,
-} from './openai/client.js';
+export { OpenAICompatibleClient } from './openai/client.js';
 export type {
   ChatCompletionResult,
   OpenAICompatibleProvider,

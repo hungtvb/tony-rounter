@@ -41,8 +41,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     config.token,
     ...(config.upstream?.apiKey ? [config.upstream.apiKey] : []),
   ];
-  const logger =
-    options.logger ?? createJsonLogger({ sensitiveValues });
+  const logger = options.logger ?? createJsonLogger({ sensitiveValues });
   const models = [...(options.models ?? [])];
   const provider =
     options.provider ??

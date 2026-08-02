@@ -1,7 +1,8 @@
 import { GatewayHttpError } from '../errors.js';
 
-export interface ChatCompletionRequest
-  extends Readonly<Record<string, unknown>> {
+export interface ChatCompletionRequest extends Readonly<
+  Record<string, unknown>
+> {
   readonly model: string;
   readonly messages: readonly unknown[];
   readonly stream?: boolean;
@@ -24,9 +25,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 function nonNegativeInteger(value: unknown): number | undefined {
-  return typeof value === 'number' &&
-    Number.isSafeInteger(value) &&
-    value >= 0
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
     ? value
     : undefined;
 }
@@ -154,8 +153,7 @@ export function normalizeChatCompletionResponse(
   return {
     ...value,
     id: value.id,
-    object:
-      typeof value.object === 'string' ? value.object : 'chat.completion',
+    object: typeof value.object === 'string' ? value.object : 'chat.completion',
     model: typeof value.model === 'string' ? value.model : requestedModel,
     choices: value.choices,
     ...(usage ? { usage } : {}),
@@ -190,9 +188,7 @@ export function normalizeChatCompletionChunk(
   return {
     ...value,
     object:
-      typeof value.object === 'string'
-        ? value.object
-        : 'chat.completion.chunk',
+      typeof value.object === 'string' ? value.object : 'chat.completion.chunk',
     choices: value.choices,
   };
 }

@@ -19,10 +19,7 @@ function authorization(): Readonly<Record<string, string>> {
   return { authorization: `Bearer ${TOKEN}` };
 }
 
-function gatewayConfig(
-  baseUrl: string,
-  timeoutMs = 500,
-): GatewayConfig {
+function gatewayConfig(baseUrl: string, timeoutMs = 500): GatewayConfig {
   return {
     host: '127.0.0.1',
     port: 0,
