@@ -5,10 +5,10 @@ import type {
   RoutingConfig,
   SelectedRoute,
 } from '../routing/types.js';
-import {
+import type {
   CircuitBreakerRegistry,
-  type CircuitKey,
-  type CircuitSnapshot,
+  CircuitKey,
+  CircuitSnapshot,
 } from './circuit-breaker.js';
 import { classifyProviderFailure, type ProviderFailure } from './failure.js';
 
@@ -138,6 +138,8 @@ interface ExecutionAbortScope {
   readonly cleanup: () => void;
 }
 
+type CodedError = Error & { readonly code: string };
+
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new RangeError(`${name} must be a positive safe integer`);
@@ -172,6 +174,14 @@ function validatePolicy(policy: FallbackPolicy): FallbackPolicy {
   return validated;
 }
 
+function errorFromUnknown(value: unknown, message: string): Error {
+  return value instanceof Error ? value : new Error(message, { cause: value });
+}
+
+function codedError(code: string, message: string, cause?: unknown): CodedError {
+  return Object.assign(new Error(message, { cause }), { code });
+}
+
 function createExecutionAbortScope(
   parentSignal: AbortSignal | undefined,
   deadlineMs: number,
@@ -180,7 +190,13 @@ function createExecutionAbortScope(
   let deadline = false;
 
   const abortFromParent = (): void => {
-    controller.abort(parentSignal?.reason ?? new Error('request aborted'));
+    controller.abort(
+      codedError(
+        'request_aborted',
+        'Routed execution was aborted',
+        parentSignal?.reason,
+      ),
+    );
   };
   if (parentSignal?.aborted) {
     abortFromParent();
@@ -190,7 +206,12 @@ function createExecutionAbortScope(
 
   const timer = setTimeout(() => {
     deadline = true;
-    controller.abort(new Error('execution deadline exceeded'));
+    controller.abort(
+      codedError(
+        'execution_deadline_exceeded',
+        'Routed execution exceeded its total deadline',
+      ),
+    );
   }, deadlineMs);
   timer.unref();
 
@@ -208,27 +229,72 @@ async function defaultSleep(
   delayMs: number,
   signal: AbortSignal,
 ): Promise<void> {
+  if (signal.aborted) {
+    throw errorFromUnknown(signal.reason, 'Retry backoff was aborted');
+  }
   if (delayMs === 0) return;
-  await new Promise<void>((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason);
-      return;
-    }
 
-    const timer = setTimeout(resolve, delayMs);
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, delayMs);
     const abort = (): void => {
       clearTimeout(timer);
-      reject(signal.reason);
+      signal.removeEventListener('abort', abort);
+      reject(errorFromUnknown(signal.reason, 'Retry backoff was aborted'));
     };
     signal.addEventListener('abort', abort, { once: true });
     timer.unref();
 
-    void Promise.resolve().then(() => {
-      if (!signal.aborted) return;
-      signal.removeEventListener('abort', abort);
-      clearTimeout(timer);
-      reject(signal.reason);
-    });
+    if (signal.aborted) abort();
+  });
+}
+
+function runWithAbort<T>(
+  operation: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(
+      errorFromUnknown(signal.reason, 'Provider operation was aborted'),
+    );
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => signal.removeEventListener('abort', abort);
+    const resolveOnce = (value: T): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const rejectOnce = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(errorFromUnknown(error, 'Provider operation failed'));
+    };
+    const abort = (): void => {
+      rejectOnce(signal.reason);
+    };
+
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+
+    let result: Promise<T>;
+    try {
+      result = operation();
+    } catch (error) {
+      rejectOnce(error);
+      return;
+    }
+
+    void result.then(resolveOnce, rejectOnce);
   });
 }
 
@@ -395,36 +461,19 @@ export async function executeRoutedRequest<T>(
           totalAttempt: totalAttempts,
         });
 
+        let value: T;
         try {
-          const value = await input.operation({
-            route,
-            routeAttempt,
-            totalAttempt: totalAttempts,
-            signal: abortScope.signal,
-          });
-          assertActive();
-          const circuit = input.circuitBreaker.recordSuccess(
-            acquisition.permit,
+          value = await runWithAbort(
+            () =>
+              input.operation({
+                route,
+                routeAttempt,
+                totalAttempt: totalAttempts,
+                signal: abortScope.signal,
+              }),
+            abortScope.signal,
           );
-          trace.push({
-            type: 'attempt_succeeded',
-            routeId: route.routeId,
-            ...(accountId !== undefined ? { accountId } : {}),
-            routeAttempt,
-            totalAttempt: totalAttempts,
-            circuit,
-          });
-          if (input.sessionId) {
-            input.affinityStore?.remember(input.sessionId, route.routeId);
-          }
-          return Object.freeze({
-            value,
-            route,
-            attempts: totalAttempts,
-            trace: freezeTrace(trace),
-          });
         } catch (error) {
-          if (error instanceof RoutedExecutionError) throw error;
           const failure = classifyProviderFailure(error);
           lastFailure = failure;
           lastCause = error;
@@ -442,6 +491,8 @@ export async function executeRoutedRequest<T>(
             failure,
             circuit,
           });
+
+          if (abortScope.signal.aborted) assertActive();
 
           if (failure.outputVisible) {
             throw executionError(
@@ -488,7 +539,19 @@ export async function executeRoutedRequest<T>(
               delayMs,
               nextRouteAttempt: routeAttempt + 1,
             });
-            await sleep(delayMs, abortScope.signal);
+            try {
+              await sleep(delayMs, abortScope.signal);
+            } catch (sleepError) {
+              lastCause = sleepError;
+              assertActive();
+              throw executionError(
+                'provider_failure',
+                'Retry backoff failed',
+                trace,
+                lastFailure,
+                sleepError,
+              );
+            }
             continue;
           }
 
@@ -519,6 +582,26 @@ export async function executeRoutedRequest<T>(
             error,
           );
         }
+
+        assertActive();
+        const circuit = input.circuitBreaker.recordSuccess(acquisition.permit);
+        trace.push({
+          type: 'attempt_succeeded',
+          routeId: route.routeId,
+          ...(accountId !== undefined ? { accountId } : {}),
+          routeAttempt,
+          totalAttempt: totalAttempts,
+          circuit,
+        });
+        if (input.sessionId) {
+          input.affinityStore?.remember(input.sessionId, route.routeId);
+        }
+        return Object.freeze({
+          value,
+          route,
+          attempts: totalAttempts,
+          trace: freezeTrace(trace),
+        });
       }
 
       if (!fallbackRequired) {
