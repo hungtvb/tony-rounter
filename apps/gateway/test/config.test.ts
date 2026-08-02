@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { GatewayConfigError, loadGatewayConfig } from '../src/index.js';
 
 const TOKEN = 'configured-token-'.padEnd(48, 'y');
+const UPSTREAM_KEY = 'upstream-key-'.padEnd(48, 'z');
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -64,6 +65,48 @@ describe('loadGatewayConfig', () => {
       allowNonLoopback: true,
       tokenSource: 'environment',
     });
+  });
+
+  it('loads a loopback development upstream and strips its trailing slash', async () => {
+    const resolved = await loadGatewayConfig({
+      env: {
+        TONY_ROUTER_TOKEN: TOKEN,
+        TONY_ROUTER_UPSTREAM_BASE_URL: 'http://127.0.0.1:9001/v1/',
+        TONY_ROUTER_UPSTREAM_API_KEY: UPSTREAM_KEY,
+        TONY_ROUTER_UPSTREAM_TIMEOUT_MS: '1234',
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      version: '0.2.0',
+      upstream: {
+        baseUrl: 'http://127.0.0.1:9001/v1',
+        apiKey: UPSTREAM_KEY,
+        timeoutMs: 1234,
+      },
+    });
+  });
+
+  it('requires TLS for a remote upstream', async () => {
+    await expect(
+      loadGatewayConfig({
+        env: {
+          TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_UPSTREAM_BASE_URL: 'http://example.com/v1',
+        },
+      }),
+    ).rejects.toThrow('Remote upstreams must use https');
+  });
+
+  it('rejects partial upstream configuration without a base URL', async () => {
+    await expect(
+      loadGatewayConfig({
+        env: {
+          TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_UPSTREAM_API_KEY: UPSTREAM_KEY,
+        },
+      }),
+    ).rejects.toThrow('TONY_ROUTER_UPSTREAM_BASE_URL is required');
   });
 
   it('fails startup on malformed numeric or boolean values', async () => {
