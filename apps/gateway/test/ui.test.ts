@@ -108,12 +108,18 @@ describe('local dashboard', () => {
         }),
       );
 
-      const response = await app.inject({ method: 'GET', url: '/v1/models' });
+      for (const url of [
+        '/v1/models',
+        '/ui/private',
+        '/ui/../v1/models',
+      ]) {
+        const response = await app.inject({ method: 'GET', url });
 
-      expect(response.statusCode).toBe(401);
-      expect(response.json()).toMatchObject({
-        error: { code: 'unauthorized' },
-      });
+        expect(response.statusCode).toBe(401);
+        expect(response.json()).toMatchObject({
+          error: { code: 'unauthorized' },
+        });
+      }
     },
   );
 });
