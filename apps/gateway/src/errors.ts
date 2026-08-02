@@ -8,6 +8,26 @@ export interface GatewayErrorPayload {
   };
 }
 
+export interface NormalizedGatewayError {
+  readonly statusCode: number;
+  readonly code: string;
+  readonly message: string;
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+export class GatewayHttpError extends Error {
+  override readonly name = 'GatewayHttpError';
+
+  constructor(
+    readonly statusCode: number,
+    readonly code: string,
+    readonly publicMessage: string,
+    readonly headers?: Readonly<Record<string, string>>,
+  ) {
+    super(publicMessage);
+  }
+}
+
 interface ErrorMetadata {
   readonly code?: string;
   readonly statusCode?: number;
@@ -31,7 +51,12 @@ export function sendGatewayError(
   code: string,
   message: string,
   requestId: string,
+  headers: Readonly<Record<string, string>> = {},
 ): FastifyReply {
+  for (const [name, value] of Object.entries(headers)) {
+    reply.header(name, value);
+  }
+
   const payload: GatewayErrorPayload = {
     error: {
       code,
@@ -43,11 +68,16 @@ export function sendGatewayError(
   return reply.code(statusCode).send(payload);
 }
 
-export function normalizeFastifyError(error: unknown): {
-  readonly statusCode: number;
-  readonly code: string;
-  readonly message: string;
-} {
+export function normalizeFastifyError(error: unknown): NormalizedGatewayError {
+  if (error instanceof GatewayHttpError) {
+    return {
+      statusCode: error.statusCode,
+      code: error.code,
+      message: error.publicMessage,
+      ...(error.headers ? { headers: error.headers } : {}),
+    };
+  }
+
   const metadata = errorMetadata(error);
 
   if (
