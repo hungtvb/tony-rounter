@@ -5,8 +5,18 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { installBearerAuthentication } from './auth.js';
 import type { GatewayConfig } from './config.js';
 import { installRequestDeadline } from './deadline.js';
-import { normalizeFastifyError, sendGatewayError } from './errors.js';
+import {
+  GatewayHttpError,
+  normalizeFastifyError,
+  sendGatewayError,
+} from './errors.js';
 import { createJsonLogger, type JsonLogger } from './logger.js';
+import {
+  OpenAICompatibleClient,
+  type OpenAICompatibleProvider,
+} from './openai/client.js';
+import { parseChatCompletionRequest } from './openai/protocol.js';
+import { createRequestAbortContext } from './request-abort.js';
 
 export interface GatewayModel {
   readonly id: string;
@@ -18,6 +28,7 @@ export interface BuildGatewayOptions {
   readonly config: GatewayConfig;
   readonly models?: readonly GatewayModel[];
   readonly logger?: JsonLogger;
+  readonly provider?: OpenAICompatibleProvider;
 }
 
 function requestPath(request: FastifyRequest): string {
@@ -26,9 +37,18 @@ function requestPath(request: FastifyRequest): string {
 
 export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   const { config } = options;
+  const sensitiveValues = [
+    config.token,
+    ...(config.upstream?.apiKey ? [config.upstream.apiKey] : []),
+  ];
   const logger =
-    options.logger ?? createJsonLogger({ sensitiveValues: [config.token] });
+    options.logger ?? createJsonLogger({ sensitiveValues });
   const models = [...(options.models ?? [])];
+  const provider =
+    options.provider ??
+    (config.upstream
+      ? new OpenAICompatibleClient(config.upstream, logger)
+      : undefined);
 
   const app = Fastify({
     logger: false,
@@ -46,7 +66,9 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     return Promise.resolve();
   });
 
-  installRequestDeadline(app, config.requestTimeoutMs);
+  installRequestDeadline(app, config.requestTimeoutMs, {
+    skipPaths: new Set(['/v1/chat/completions']),
+  });
   installBearerAuthentication(app, config.token);
 
   app.addHook('onSend', (request, reply, payload) => {
@@ -79,6 +101,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
       normalized.code,
       normalized.message,
       request.id,
+      normalized.headers,
     );
   });
 
@@ -98,15 +121,66 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     version: config.version,
   }));
 
-  app.get('/v1/models', () => ({
-    object: 'list',
-    data: models.map((model) => ({
-      id: model.id,
-      object: 'model',
-      created: model.created ?? 0,
-      owned_by: model.ownedBy ?? 'tony-router',
-    })),
-  }));
+  app.get('/v1/models', async (request, reply) => {
+    if (!provider) {
+      return {
+        object: 'list',
+        data: models.map((model) => ({
+          id: model.id,
+          object: 'model',
+          created: model.created ?? 0,
+          owned_by: model.ownedBy ?? 'tony-router',
+        })),
+      };
+    }
+
+    const abortContext = createRequestAbortContext(request, reply);
+    try {
+      return await provider.listModels({
+        requestId: request.id,
+        signal: abortContext.signal,
+      });
+    } finally {
+      abortContext.cleanup();
+    }
+  });
+
+  app.post('/v1/chat/completions', async (request, reply) => {
+    if (!provider) {
+      throw new GatewayHttpError(
+        503,
+        'provider_not_configured',
+        'No OpenAI-compatible upstream is configured',
+      );
+    }
+
+    const chatRequest = parseChatCompletionRequest(request.body);
+    const abortContext = createRequestAbortContext(request, reply);
+    let streaming = false;
+
+    try {
+      const result = await provider.createChatCompletion(chatRequest, {
+        requestId: request.id,
+        signal: abortContext.signal,
+      });
+
+      if (!result.stream) return result.body;
+
+      streaming = true;
+      const cleanup = (): void => abortContext.cleanup();
+      result.body.once('end', cleanup);
+      result.body.once('close', cleanup);
+      result.body.once('error', cleanup);
+
+      reply.header('content-type', 'text/event-stream; charset=utf-8');
+      reply.header('cache-control', 'no-cache, no-transform');
+      reply.header('connection', 'keep-alive');
+      reply.header('x-accel-buffering', 'no');
+      return reply.send(result.body);
+    } finally {
+      if (!streaming) abortContext.cleanup();
+    }
+  });
 
   return app;
 }
