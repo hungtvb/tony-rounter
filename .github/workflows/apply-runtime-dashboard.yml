@@ -1,0 +1,67 @@
+name: Apply runtime dashboard
+
+on:
+  push:
+    branches:
+      - feat/runtime-dashboard
+    paths:
+      - .github/workflows/apply-runtime-dashboard.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout dashboard branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/runtime-dashboard
+
+      - name: Restore authored files
+        run: |
+          cat .github/runtime-dashboard.payload.* > /tmp/runtime-dashboard.b64
+          base64 --decode /tmp/runtime-dashboard.b64 > /tmp/runtime-dashboard.tar.gz
+          tar -tzf /tmp/runtime-dashboard.tar.gz
+          tar -xzf /tmp/runtime-dashboard.tar.gz -C .
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format authored files
+        run: >-
+          pnpm exec prettier --write
+          apps/gateway/src/app.ts
+          apps/gateway/src/telemetry.ts
+          apps/gateway/src/ui.ts
+          apps/gateway/src/ui-assets/html.ts
+          apps/gateway/src/ui-assets/styles.ts
+          apps/gateway/src/ui-assets/client.ts
+          apps/gateway/test/telemetry.test.ts
+          apps/gateway/test/ui.test.ts
+
+      - name: Verify repository
+        run: pnpm verify
+
+      - name: Commit verified dashboard
+        run: |
+          rm -f .github/runtime-dashboard.payload.*
+          rm -f .github/workflows/apply-runtime-dashboard.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(ui): add runtime control plane dashboard"
+          git push origin HEAD:feat/runtime-dashboard
