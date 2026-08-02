@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  parseRoutingConfig,
-  selectRoute,
-  type RequiredCapabilities,
-} from '../src/index.js';
+import { parseRoutingConfig, selectRoute } from '../src/index.js';
 
 const CONFIG = parseRoutingConfig(`
 version: 1
@@ -59,7 +55,12 @@ describe('routing determinism hardening', () => {
   });
 
   it('returns an immutable snapshot independent from caller mutation', () => {
-    const mutableRequirements: RequiredCapabilities = { ...REQUIREMENTS };
+    const mutableRequirements: {
+      tools: boolean;
+      parallelToolCalls: boolean;
+      vision: boolean;
+      structuredOutput: boolean;
+    } = { ...REQUIREMENTS };
     const decision = selectRoute(CONFIG, {
       requiredCapabilities: mutableRequirements,
     });
