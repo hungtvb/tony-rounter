@@ -8,9 +8,10 @@ import {
 } from '../src/index.js';
 
 const TOKEN = 'ui-test-token-'.padEnd(48, 'x');
+const UPSTREAM_API_KEY = 'upstream-secret-key';
 const apps: FastifyInstance[] = [];
 
-function config(): GatewayConfig {
+function config(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
     host: '127.0.0.1',
     port: 0,
@@ -22,7 +23,12 @@ function config(): GatewayConfig {
     requestTimeoutMs: 1000,
     shutdownGraceMs: 100,
     version: '0.2.0',
+    ...overrides,
   };
+}
+
+function authorization(): Readonly<Record<string, string>> {
+  return { authorization: `Bearer ${TOKEN}` };
 }
 
 function track(app: FastifyInstance): FastifyInstance {
@@ -34,7 +40,7 @@ afterEach(async () => {
   await Promise.allSettled(apps.splice(0).map((app) => app.close()));
 });
 
-describe('local dashboard', () => {
+describe('local runtime dashboard', () => {
   it('redirects the gateway root to the dashboard', async () => {
     const app = track(
       buildGateway({ config: config(), logger: createNullLogger() }),
@@ -64,12 +70,13 @@ describe('local dashboard', () => {
       "connect-src 'self'",
     );
     expect(response.body).toContain('Tony Router');
+    expect(response.body).toContain('Request Traces');
     expect(response.body).toContain('/ui/styles.css');
     expect(response.body).toContain('/ui/app.js');
     expect(response.body).not.toContain(TOKEN);
   });
 
-  it('serves dashboard assets without exposing the gateway token', async () => {
+  it('serves dashboard assets without exposing gateway credentials', async () => {
     const app = track(
       buildGateway({ config: config(), logger: createNullLogger() }),
     );
@@ -81,7 +88,7 @@ describe('local dashboard', () => {
 
     expect(styles.statusCode).toBe(200);
     expect(styles.headers['content-type']).toContain('text/css');
-    expect(styles.body).toContain('.app-shell');
+    expect(styles.body).toContain('.dashboard-grid');
     expect(styles.body).not.toContain(TOKEN);
 
     expect(script.statusCode).toBe(200);
@@ -89,12 +96,13 @@ describe('local dashboard', () => {
     expect(script.body).toContain(
       "sessionStorage.getItem('tony-router-token')",
     );
+    expect(script.body).toContain("fetch('/ui/api/dashboard'");
     expect(script.body).toContain("fetch('/v1/models'");
     expect(script.body).toContain("fetch('/v1/chat/completions'");
     expect(script.body).not.toContain(TOKEN);
   });
 
-  it('keeps protected APIs locked even though the dashboard is public', async () => {
+  it('keeps runtime metadata and provider APIs behind bearer auth', async () => {
     const app = track(
       buildGateway({
         config: config(),
@@ -103,13 +111,102 @@ describe('local dashboard', () => {
       }),
     );
 
-    for (const url of ['/v1/models', '/ui/private', '/ui/../v1/models']) {
-      const response = await app.inject({ method: 'GET', url });
+    const [dashboard, models] = await Promise.all([
+      app.inject({ method: 'GET', url: '/ui/api/dashboard' }),
+      app.inject({ method: 'GET', url: '/v1/models' }),
+    ]);
 
-      expect(response.statusCode).toBe(401);
-      expect(response.json()).toMatchObject({
-        error: { code: 'unauthorized' },
-      });
-    }
+    expect(dashboard.statusCode).toBe(401);
+    expect(models.statusCode).toBe(401);
+    expect(dashboard.json()).toMatchObject({
+      error: { code: 'unauthorized' },
+    });
+  });
+
+  it('returns safe runtime metadata without local or upstream secrets', async () => {
+    const app = track(
+      buildGateway({
+        config: config({
+          upstream: {
+            baseUrl: 'https://api.example.test/v1',
+            apiKey: UPSTREAM_API_KEY,
+            timeoutMs: 1000,
+          },
+        }),
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ui/api/dashboard',
+      headers: authorization(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      gateway: {
+        version: '0.2.0',
+        host: '127.0.0.1',
+        port: 0,
+        tokenSource: 'environment',
+      },
+      provider: {
+        mode: 'openai-compatible',
+        baseUrl: 'https://api.example.test/v1',
+        credentialConfigured: true,
+      },
+      telemetry: {
+        requestsSinceStart: 0,
+        inFlightRequests: 0,
+        recentRequests: [],
+      },
+    });
+    expect(response.body).not.toContain(TOKEN);
+    expect(response.body).not.toContain(UPSTREAM_API_KEY);
+  });
+
+  it('reports real bounded request metadata while excluding dashboard polling', async () => {
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        models: [{ id: 'tony-auto' }],
+      }),
+    );
+
+    await app.inject({
+      method: 'GET',
+      url: '/ui/api/dashboard',
+      headers: authorization(),
+    });
+    await app.inject({
+      method: 'GET',
+      url: '/v1/models',
+      headers: authorization(),
+    });
+    await app.inject({ method: 'GET', url: '/v1/models' });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ui/api/dashboard',
+      headers: authorization(),
+    });
+    const body = response.json();
+
+    expect(body.telemetry).toMatchObject({
+      requestsSinceStart: 2,
+      successfulRequestsSinceStart: 1,
+      successRate: 50,
+      inFlightRequests: 0,
+    });
+    expect(body.telemetry.recentRequests).toHaveLength(2);
+    expect(body.telemetry.recentRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: '/v1/models', statusCode: 200 }),
+        expect.objectContaining({ path: '/v1/models', statusCode: 401 }),
+      ]),
+    );
+    expect(JSON.stringify(body.telemetry)).not.toContain('authorization');
   });
 });
