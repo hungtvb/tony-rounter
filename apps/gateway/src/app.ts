@@ -66,7 +66,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   });
 
   installRequestDeadline(app, config.requestTimeoutMs, {
-    skipPaths: new Set(['/v1/chat/completions']),
+    skipPaths: new Set(['/v1/models', '/v1/chat/completions']),
   });
   installBearerAuthentication(app, config.token);
 
@@ -165,7 +165,6 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
 
       if (!result.stream) return result.body;
 
-      streaming = true;
       const cleanup = (): void => abortContext.cleanup();
       result.body.once('end', cleanup);
       result.body.once('close', cleanup);
@@ -175,7 +174,9 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
       reply.header('cache-control', 'no-cache, no-transform');
       reply.header('connection', 'keep-alive');
       reply.header('x-accel-buffering', 'no');
-      return reply.send(result.body);
+      const sent = reply.send(result.body);
+      streaming = true;
+      return sent;
     } finally {
       if (!streaming) abortContext.cleanup();
     }
