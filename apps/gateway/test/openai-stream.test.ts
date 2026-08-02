@@ -133,10 +133,14 @@ describe('OpenAI-compatible streaming adapter', () => {
   it('turns malformed later SSE data into a terminal error event', async () => {
     const upstream = Fastify();
     upstream.post('/v1/chat/completions', (_request, reply) => {
-      hijackSse(reply, [
+      reply.hijack();
+      reply.raw.writeHead(200, { 'content-type': 'text/event-stream' });
+      reply.raw.write(
         'data: {"id":"chunk-1","choices":[{"delta":{"content":"Hi"}}]}\n\n',
-        'data: not-json\n\n',
-      ]);
+      );
+      setTimeout(() => {
+        reply.raw.end('data: not-json\n\n');
+      }, 10).unref();
     });
     const baseUrl = await harness.listen(upstream);
     const gateway = harness.track(
@@ -153,6 +157,7 @@ describe('OpenAI-compatible streaming adapter', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('"content":"Hi"');
     expect(response.body).toContain('"code":"upstream_invalid_stream"');
     expect(response.body.endsWith('data: [DONE]\n\n')).toBe(true);
   });
