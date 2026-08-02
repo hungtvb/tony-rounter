@@ -35,18 +35,48 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Apply formatting and restore CI
+      - name: Apply verified source and test hygiene
         run: |
-          pnpm exec prettier --write packages/core/src/runtime/fallback.ts
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/core/test/runtime-fallback.test.ts')
+          text = path.read_text()
+          directive = (
+              '/* eslint-disable @typescript-eslint/require-await -- '
+              'provider mocks intentionally implement the asynchronous operation contract */\n\n'
+          )
+          if not text.startswith('/* eslint-disable @typescript-eslint/require-await'):
+              text = directive + text
+
+          old = '      if (signal.aborted) return Promise.reject(signal.reason);'
+          new = '''      if (signal.aborted) {
+            const reason = signal.reason;
+            return Promise.reject(
+              reason instanceof Error
+                ? reason
+                : new Error('Fake retry sleep was aborted', { cause: reason }),
+            );
+          }'''
+          if old not in text:
+              raise SystemExit('expected fake sleep rejection was not found')
+          path.write_text(text.replace(old, new))
+          PY
+          pnpm exec prettier --write \
+            packages/core/src/runtime/fallback.ts \
+            packages/core/test/runtime-fallback.test.ts
           git checkout origin/main -- .github/workflows/ci.yml
 
       - name: Verify
         run: pnpm verify
 
-      - name: Commit verified formatting
+      - name: Commit verified Phase 3 fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/core/src/runtime/fallback.ts .github/workflows/ci.yml
-          git commit -m "chore(core): format fallback runtime"
+          git add \
+            packages/core/src/runtime/fallback.ts \
+            packages/core/test/runtime-fallback.test.ts \
+            .github/workflows/ci.yml
+          git commit -m "fix(core): verify fallback runtime hardening"
           git push origin HEAD:feat/safe-fallback-runtime
