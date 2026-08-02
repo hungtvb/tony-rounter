@@ -6,19 +6,23 @@ Local-first AI gateway and task-aware model router for coding agents.
 
 ## Current status
 
-The secure local transport is implemented:
+The first usable OpenAI-compatible gateway is implemented:
 
 - loopback-only binding by default
 - generated 256-bit bearer token stored in `~/.tony-router/token`
 - public `GET /health`
-- authenticated `GET /v1/models`
+- authenticated and upstream-backed `GET /v1/models`
+- authenticated `POST /v1/chat/completions`
+- non-streaming chat completion proxy with normalized usage metadata
+- incremental SSE validation and canonicalization for streaming responses
+- upstream timeout and downstream disconnect propagation
+- normalized upstream errors for invalid requests, auth failures, rate limits,
+  timeouts, malformed responses, and transient failures
 - generated request IDs returned through `x-request-id`
-- bounded request bodies and request deadlines
-- normalized JSON errors
-- structured logs with secret redaction
+- structured logs with local and upstream credential redaction
 - bounded graceful shutdown for `SIGINT` and `SIGTERM`
 
-Provider adapters and completion endpoints are the next implementation phase.
+Capability-aware routing and multi-provider fallback are the next phases.
 
 ## Run locally
 
@@ -38,14 +42,51 @@ The gateway listens on `127.0.0.1:8787` by default. When no
 ~/.tony-router/token
 ```
 
-Read it from the file and send it as a bearer token:
+Configure an OpenAI-compatible upstream before starting the gateway:
+
+```bash
+export TONY_ROUTER_UPSTREAM_BASE_URL=https://api.openai.com/v1
+export TONY_ROUTER_UPSTREAM_API_KEY=your-provider-api-key
+```
+
+Base URLs with or without the trailing `/v1` are accepted. Remote upstreams
+must use HTTPS. Plain HTTP is accepted only for `localhost`, `127.0.0.1`, and
+`::1` development upstreams.
+
+Read the local gateway token and call the API:
 
 ```bash
 curl http://127.0.0.1:8787/health
 
 curl http://127.0.0.1:8787/v1/models \
   -H "Authorization: Bearer $(cat ~/.tony-router/token)"
+
+curl http://127.0.0.1:8787/v1/chat/completions \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4.1-mini",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
 ```
+
+Streaming uses standard Chat Completions SSE frames:
+
+```bash
+curl -N http://127.0.0.1:8787/v1/chat/completions \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4.1-mini",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'
+```
+
+The gateway validates every upstream SSE event before forwarding it. A failure
+before the first event returns a normalized HTTP error. A failure after output
+has started emits a final SSE `error` object with the local `request_id`, then
+terminates with `data: [DONE]`.
 
 On Windows PowerShell:
 
@@ -55,7 +96,7 @@ Invoke-RestMethod http://127.0.0.1:8787/v1/models `
   -Headers @{ Authorization = "Bearer $token" }
 ```
 
-See `.env.example` for supported configuration. Binding to a non-loopback
+See `.env.example` for all supported configuration. Binding to a non-loopback
 address is rejected unless `TONY_ROUTER_ALLOW_NON_LOOPBACK=true` is explicitly
 set. Authentication remains mandatory regardless of `Host`, `Origin`, or
 forwarded headers.
