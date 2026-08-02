@@ -197,13 +197,13 @@ describe('OpenAI-compatible JSON adapter', () => {
     },
   );
 
-  it('preserves rate-limit metadata from the upstream', async () => {
+  it('preserves rate-limit metadata while redacting credentials', async () => {
     const upstream = Fastify();
     upstream.post('/v1/chat/completions', (_request, reply) =>
       reply
         .header('retry-after', '7')
         .code(429)
-        .send({ error: { message: 'Try later' } }),
+        .send({ error: { message: `Try later with ${UPSTREAM_KEY}` } }),
     );
     const baseUrl = await harness.listen(upstream);
     const gateway = harness.track(
@@ -220,8 +220,12 @@ describe('OpenAI-compatible JSON adapter', () => {
 
     expect(response.statusCode).toBe(429);
     expect(response.headers['retry-after']).toBe('7');
+    expect(response.body).not.toContain(UPSTREAM_KEY);
     expect(response.json()).toMatchObject({
-      error: { code: 'upstream_rate_limited', message: 'Try later' },
+      error: {
+        code: 'upstream_rate_limited',
+        message: 'Try later with [REDACTED]',
+      },
     });
   });
 
@@ -247,6 +251,39 @@ describe('OpenAI-compatible JSON adapter', () => {
     expect(response.json()).toMatchObject({
       error: { code: 'upstream_unavailable' },
     });
+  });
+
+  it('rejects upstream redirects before the target is contacted', async () => {
+    let targetCalls = 0;
+    const target = Fastify();
+    target.post('/v1/chat/completions', () => {
+      targetCalls += 1;
+      return { id: 'redirected', choices: [] };
+    });
+    const targetUrl = await harness.listen(target);
+
+    const upstream = Fastify();
+    upstream.post('/v1/chat/completions', (_request, reply) =>
+      reply.redirect(`${targetUrl}/v1/chat/completions`),
+    );
+    const baseUrl = await harness.listen(upstream);
+    const gateway = harness.track(
+      buildGateway({
+        config: gatewayConfig(baseUrl),
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await chat(gateway, {
+      model: 'model-a',
+      messages: [],
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      error: { code: 'upstream_connection_error' },
+    });
+    expect(targetCalls).toBe(0);
   });
 
   it('aborts an upstream that exceeds the configured idle timeout', async () => {
