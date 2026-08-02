@@ -55,7 +55,11 @@ export function deriveChatRequestCapabilities(
       requestHasTools && input.parallel_tool_calls === true,
     hasImageInput: hasImageInput(input.messages),
     hasStructuredOutput: hasStructuredOutput(input.response_format),
-    estimatedInputTokens: options.estimatedInputTokens,
-    reservedOutputTokens: options.reservedOutputTokens,
+    ...(options.estimatedInputTokens !== undefined
+      ? { estimatedInputTokens: options.estimatedInputTokens }
+      : {}),
+    ...(options.reservedOutputTokens !== undefined
+      ? { reservedOutputTokens: options.reservedOutputTokens }
+      : {}),
   });
 }
