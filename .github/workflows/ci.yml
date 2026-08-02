@@ -32,5 +32,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify
-        run: pnpm verify
+      - name: Print canonical Prettier patch
+        run: |
+          pnpm exec prettier --write packages/core/src/runtime/fallback.ts
+          git diff -- packages/core/src/runtime/fallback.ts
+          exit 1
