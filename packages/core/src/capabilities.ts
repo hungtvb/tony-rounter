@@ -23,21 +23,38 @@ export interface ModelCapabilities {
   readonly contextTokens: number;
 }
 
+function tokenCount(value: number | undefined, name: string): number {
+  if (value === undefined) return 0;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
 export function deriveRequiredCapabilities(
   input: CapabilityInput,
 ): RequiredCapabilities {
-  const estimatedInputTokens = input.estimatedInputTokens ?? 0;
-  const reservedOutputTokens = input.reservedOutputTokens ?? 0;
+  const estimatedInputTokens = tokenCount(
+    input.estimatedInputTokens,
+    'estimatedInputTokens',
+  );
+  const reservedOutputTokens = tokenCount(
+    input.reservedOutputTokens,
+    'reservedOutputTokens',
+  );
   const minimumContextTokens = estimatedInputTokens + reservedOutputTokens;
+  if (!Number.isSafeInteger(minimumContextTokens)) {
+    throw new RangeError('combined context token requirement exceeds safe integer range');
+  }
 
-  return {
+  return Object.freeze({
     tools: input.hasTools ?? false,
     parallelToolCalls:
       (input.hasTools ?? false) && (input.allowsParallelToolCalls ?? false),
     vision: input.hasImageInput ?? false,
     structuredOutput: input.hasStructuredOutput ?? false,
     ...(minimumContextTokens > 0 ? { minimumContextTokens } : {}),
-  };
+  });
 }
 
 export function supportsCapabilities(
