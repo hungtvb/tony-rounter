@@ -37,29 +37,31 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     genReqId: () => randomUUID(),
   });
 
-  app.addHook('onRequest', async (request) => {
+  app.addHook('onRequest', (request) => {
     logger.info('request_started', {
       requestId: request.id,
       method: request.method,
       path: requestPath(request),
     });
+    return Promise.resolve();
   });
 
   installRequestDeadline(app, config.requestTimeoutMs);
   installBearerAuthentication(app, config.token);
 
-  app.addHook('onSend', async (request, reply, payload) => {
+  app.addHook('onSend', (request, reply, payload) => {
     reply.header('x-request-id', request.id);
-    return payload;
+    return Promise.resolve(payload);
   });
 
-  app.addHook('onResponse', async (request, reply) => {
+  app.addHook('onResponse', (request, reply) => {
     logger.info('request_completed', {
       requestId: request.id,
       method: request.method,
       path: requestPath(request),
       statusCode: reply.statusCode,
     });
+    return Promise.resolve();
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -90,13 +92,13 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     ),
   );
 
-  app.get('/health', async () => ({
+  app.get('/health', () => ({
     status: 'ok',
     service: 'tony-router',
     version: config.version,
   }));
 
-  app.get('/v1/models', async () => ({
+  app.get('/v1/models', () => ({
     object: 'list',
     data: models.map((model) => ({
       id: model.id,
