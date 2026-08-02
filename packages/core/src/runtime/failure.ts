@@ -156,6 +156,7 @@ export function classifyProviderFailure(error: unknown): ProviderFailure {
         outputVisible: visible,
         ...(retryAfter !== undefined ? { retryAfterMs: retryAfter } : {}),
       });
+    case 'execution_deadline_exceeded':
     case 'upstream_timeout':
     case 'request_timeout':
       return failure('timeout', code, message, {
