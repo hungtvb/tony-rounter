@@ -44,28 +44,22 @@ jobs:
           circuit_text = circuit.read_text()
           old_permit = '    const permit = Object.freeze(new CircuitPermit(key, circuit.state, token));'
           new_permit = '    const permit = new CircuitPermit(key, circuit.state, token);'
-          if old_permit not in circuit_text:
-              raise SystemExit('expected frozen permit was not found')
-          circuit.write_text(circuit_text.replace(old_permit, new_permit))
+          if circuit_text.count(old_permit) != 1:
+              raise SystemExit('expected exactly one frozen permit')
+          circuit.write_text(circuit_text.replace(old_permit, new_permit, 1))
 
           fallback = Path('packages/core/src/runtime/fallback.ts')
           fallback_text = fallback.read_text()
-          old_retry = '''          if (
-            failure.retryable &&
-            hasRouteAttempt &&
-            hasTotalAttempt &&
-            fitsDeadline
-          ) {'''
-          new_retry = '''          if (
-            circuit.state !== 'open' &&
-            failure.retryable &&
-            hasRouteAttempt &&
-            hasTotalAttempt &&
-            fitsDeadline
-          ) {'''
-          if old_retry not in fallback_text:
-              raise SystemExit('expected retry condition was not found')
-          fallback.write_text(fallback_text.replace(old_retry, new_retry))
+          retry_anchor = '            failure.retryable &&\n'
+          if fallback_text.count(retry_anchor) != 1:
+              raise SystemExit('expected exactly one retry anchor')
+          fallback.write_text(
+              fallback_text.replace(
+                  retry_anchor,
+                  "            circuit.state !== 'open' &&\n" + retry_anchor,
+                  1,
+              )
+          )
 
           test = Path('packages/core/test/runtime-fallback.test.ts')
           test_text = test.read_text()
@@ -85,15 +79,15 @@ jobs:
                 : new Error('Fake retry sleep was aborted', { cause: reason }),
             );
           }'''
-          if old_sleep not in test_text:
-              raise SystemExit('expected fake sleep rejection was not found')
-          test_text = test_text.replace(old_sleep, new_sleep)
+          if test_text.count(old_sleep) != 1:
+              raise SystemExit('expected exactly one fake sleep rejection')
+          test_text = test_text.replace(old_sleep, new_sleep, 1)
 
           old_listener = "          signal.addEventListener('abort', resolve, { once: true });"
           new_listener = "          signal.addEventListener('abort', () => resolve(), { once: true });"
-          if old_listener not in test_text:
-              raise SystemExit('expected abort listener was not found')
-          test.write_text(test_text.replace(old_listener, new_listener))
+          if test_text.count(old_listener) != 1:
+              raise SystemExit('expected exactly one abort listener')
+          test.write_text(test_text.replace(old_listener, new_listener, 1))
           PY
           pnpm exec prettier --write \
             packages/core/src/runtime/circuit-breaker.ts \
