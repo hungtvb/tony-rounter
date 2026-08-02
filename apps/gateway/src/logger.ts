@@ -44,9 +44,8 @@ function sanitize(
     return value;
   }
   if (typeof value === 'bigint') return value.toString();
-  if (typeof value === 'function' || typeof value === 'symbol') {
-    return String(value);
-  }
+  if (typeof value === 'function') return `[FUNCTION ${value.name || 'anonymous'}]`;
+  if (typeof value === 'symbol') return value.description ?? '[SYMBOL]';
   if (value instanceof Error) {
     return {
       name: value.name,
@@ -68,7 +67,7 @@ function sanitize(
     }
     return output;
   }
-  return String(value);
+  return '[UNSERIALIZABLE]';
 }
 
 export function createJsonLogger(options: JsonLoggerOptions = {}): JsonLogger {
