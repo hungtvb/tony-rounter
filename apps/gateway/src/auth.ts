@@ -4,6 +4,15 @@ import type { FastifyInstance } from 'fastify';
 
 import { sendGatewayError } from './errors.js';
 
+const PUBLIC_PATHS = new Set([
+  '/',
+  '/health',
+  '/ui',
+  '/ui/',
+  '/ui/styles.css',
+  '/ui/app.js',
+]);
+
 function matchesToken(candidate: string, expected: string): boolean {
   const candidateBuffer = Buffer.from(candidate);
   const expectedBuffer = Buffer.from(expected);
@@ -22,8 +31,8 @@ export function installBearerAuthentication(
   expectedToken: string,
 ): void {
   app.addHook('onRequest', async (request, reply) => {
-    const pathname = request.url.split('?', 1)[0];
-    if (pathname === '/health') return;
+    const pathname = request.url.split('?', 1)[0] ?? '/';
+    if (PUBLIC_PATHS.has(pathname)) return;
 
     const candidate = bearerToken(request.headers.authorization);
     if (candidate && matchesToken(candidate, expectedToken)) return;

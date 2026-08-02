@@ -17,6 +17,7 @@ import {
 } from './openai/client.js';
 import { parseChatCompletionRequest } from './openai/protocol.js';
 import { createRequestAbortContext } from './request-abort.js';
+import { installUiRoutes } from './ui.js';
 
 export interface GatewayModel {
   readonly id: string;
@@ -113,6 +114,8 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
       request.id,
     ),
   );
+
+  installUiRoutes(app);
 
   app.get('/health', () => ({
     status: 'ok',
