@@ -11,6 +11,19 @@ const TOKEN = 'ui-test-token-'.padEnd(48, 'x');
 const UPSTREAM_API_KEY = 'upstream-secret-key';
 const apps: FastifyInstance[] = [];
 
+interface DashboardTestResponse {
+  readonly telemetry: {
+    readonly requestsSinceStart: number;
+    readonly successfulRequestsSinceStart: number;
+    readonly successRate: number | null;
+    readonly inFlightRequests: number;
+    readonly recentRequests: readonly {
+      readonly path: string;
+      readonly statusCode: number;
+    }[];
+  };
+}
+
 function config(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
     host: '127.0.0.1',
@@ -192,7 +205,7 @@ describe('local runtime dashboard', () => {
       url: '/ui/api/dashboard',
       headers: authorization(),
     });
-    const body = response.json();
+    const body = response.json<DashboardTestResponse>();
 
     expect(body.telemetry).toMatchObject({
       requestsSinceStart: 2,
