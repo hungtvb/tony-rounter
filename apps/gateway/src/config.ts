@@ -4,12 +4,20 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1']);
+const LOCAL_UPSTREAM_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SHUTDOWN_GRACE_MS = 5_000;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 60_000;
 
 export class GatewayConfigError extends Error {
   override readonly name = 'GatewayConfigError';
+}
+
+export interface OpenAIUpstreamConfig {
+  readonly baseUrl: string;
+  readonly apiKey?: string;
+  readonly timeoutMs: number;
 }
 
 export interface GatewayConfig {
@@ -22,6 +30,7 @@ export interface GatewayConfig {
   readonly bodyLimitBytes: number;
   readonly requestTimeoutMs: number;
   readonly shutdownGraceMs: number;
+  readonly upstream?: OpenAIUpstreamConfig;
   readonly version: string;
 }
 
@@ -71,6 +80,84 @@ function validateToken(token: string): string {
     );
   }
   return normalized;
+}
+
+function validateUpstreamApiKey(apiKey: string): string {
+  const normalized = apiKey.trim();
+  if (normalized.length === 0 || normalized.length > 2048) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_UPSTREAM_API_KEY must contain between 1 and 2048 characters',
+    );
+  }
+  if (/\s/.test(normalized)) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_UPSTREAM_API_KEY must not contain whitespace',
+    );
+  }
+  return normalized;
+}
+
+function normalizeUpstreamBaseUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_UPSTREAM_BASE_URL must be an absolute URL',
+    );
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_UPSTREAM_BASE_URL must use http or https',
+    );
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_UPSTREAM_BASE_URL must not contain credentials, query, or fragment',
+    );
+  }
+  if (
+    url.protocol !== 'https:' &&
+    !LOCAL_UPSTREAM_HOSTS.has(url.hostname.toLowerCase())
+  ) {
+    throw new GatewayConfigError(
+      'Remote upstreams must use https; plain http is allowed only for loopback development',
+    );
+  }
+
+  return url.toString().replace(/\/$/, '');
+}
+
+function loadUpstreamConfig(
+  env: NodeJS.ProcessEnv,
+): OpenAIUpstreamConfig | undefined {
+  const baseUrl = env.TONY_ROUTER_UPSTREAM_BASE_URL;
+  const hasPartialConfiguration =
+    env.TONY_ROUTER_UPSTREAM_API_KEY !== undefined ||
+    env.TONY_ROUTER_UPSTREAM_TIMEOUT_MS !== undefined;
+
+  if (!baseUrl) {
+    if (hasPartialConfiguration) {
+      throw new GatewayConfigError(
+        'TONY_ROUTER_UPSTREAM_BASE_URL is required when upstream options are configured',
+      );
+    }
+    return undefined;
+  }
+
+  const apiKey = env.TONY_ROUTER_UPSTREAM_API_KEY;
+  return Object.freeze({
+    baseUrl: normalizeUpstreamBaseUrl(baseUrl),
+    ...(apiKey ? { apiKey: validateUpstreamApiKey(apiKey) } : {}),
+    timeoutMs: parseInteger(
+      'TONY_ROUTER_UPSTREAM_TIMEOUT_MS',
+      env.TONY_ROUTER_UPSTREAM_TIMEOUT_MS,
+      DEFAULT_UPSTREAM_TIMEOUT_MS,
+      10,
+      10 * 60_000,
+    ),
+  });
 }
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
@@ -137,6 +224,7 @@ export async function loadGatewayConfig(
         source: 'environment' as const,
       }
     : await loadOrCreateToken(tokenFile);
+  const upstream = loadUpstreamConfig(env);
 
   return Object.freeze({
     host,
@@ -172,6 +260,7 @@ export async function loadGatewayConfig(
       10,
       60_000,
     ),
-    version: '0.1.0',
+    ...(upstream ? { upstream } : {}),
+    version: '0.2.0',
   });
 }

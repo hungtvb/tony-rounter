@@ -1,0 +1,553 @@
+import { Readable } from 'node:stream';
+
+import type { OpenAIUpstreamConfig } from '../config.js';
+import { GatewayHttpError } from '../errors.js';
+import type { JsonLogger } from '../logger.js';
+import {
+  type CanonicalModelList,
+  type ChatCompletionRequest,
+  normalizeChatCompletionResponse,
+  normalizeModelList,
+  upstreamErrorMessage,
+} from './protocol.js';
+import {
+  canonicalizeChatSseData,
+  canonicalStreamError,
+  type CanonicalSseEvent,
+  OpenAISseDecoder,
+} from './sse.js';
+
+const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
+
+export interface ProviderRequestContext {
+  readonly requestId: string;
+  readonly signal: AbortSignal;
+}
+
+export type ChatCompletionResult =
+  | {
+      readonly stream: false;
+      readonly body: Readonly<Record<string, unknown>>;
+    }
+  | {
+      readonly stream: true;
+      readonly body: Readable;
+    };
+
+export interface OpenAICompatibleProvider {
+  listModels(context: ProviderRequestContext): Promise<CanonicalModelList>;
+  createChatCompletion(
+    request: ChatCompletionRequest,
+    context: ProviderRequestContext,
+  ): Promise<ChatCompletionResult>;
+}
+
+interface AbortScope {
+  readonly signal: AbortSignal;
+  readonly parentSignal: AbortSignal;
+  readonly timedOut: () => boolean;
+  readonly resetTimeout: () => void;
+  readonly abort: () => void;
+  readonly cleanup: () => void;
+}
+
+function byteChunk(value: unknown): Uint8Array {
+  if (!(value instanceof Uint8Array)) {
+    throw new GatewayHttpError(
+      502,
+      'upstream_invalid_response',
+      'Upstream emitted a non-byte response chunk',
+    );
+  }
+  return value;
+}
+
+function redactSensitiveMessage(
+  message: string | undefined,
+  sensitiveValue: string | undefined,
+): string | undefined {
+  if (!message || !sensitiveValue) return message;
+  return message.split(sensitiveValue).join('[REDACTED]');
+}
+
+function createAbortScope(
+  parentSignal: AbortSignal,
+  timeoutMs: number,
+): AbortScope {
+  const controller = new AbortController();
+  let timeout: NodeJS.Timeout | undefined;
+  let didTimeOut = false;
+
+  const abortFromParent = (): void => {
+    controller.abort(parentSignal.reason);
+  };
+  const resetTimeout = (): void => {
+    if (timeout) clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      didTimeOut = true;
+      controller.abort(new Error('upstream timeout'));
+    }, timeoutMs);
+    timeout.unref();
+  };
+  const cleanup = (): void => {
+    if (timeout) clearTimeout(timeout);
+    timeout = undefined;
+    parentSignal.removeEventListener('abort', abortFromParent);
+  };
+
+  if (parentSignal.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
+  resetTimeout();
+
+  return {
+    signal: controller.signal,
+    parentSignal,
+    timedOut: () => didTimeOut,
+    resetTimeout,
+    abort: () => controller.abort(new Error('upstream request cancelled')),
+    cleanup,
+  };
+}
+
+function endpoint(
+  baseUrl: string,
+  resource: 'models' | 'chat/completions',
+): string {
+  const url = new URL(`${baseUrl}/`);
+  const basePath = url.pathname.replace(/\/+$/, '');
+  url.pathname = basePath.endsWith('/v1')
+    ? `${basePath}/${resource}`
+    : `${basePath}/v1/${resource}`;
+  return url.toString();
+}
+
+function safeUpstreamRequestId(response: Response): string | undefined {
+  const candidate =
+    response.headers.get('x-request-id') ??
+    response.headers.get('request-id') ??
+    undefined;
+  return candidate && /^[A-Za-z0-9._:-]{1,200}$/.test(candidate)
+    ? candidate
+    : undefined;
+}
+
+function mappedTransportError(
+  error: unknown,
+  scope: AbortScope,
+): GatewayHttpError {
+  if (error instanceof GatewayHttpError) return error;
+  if (scope.timedOut()) {
+    return new GatewayHttpError(
+      504,
+      'upstream_timeout',
+      'Upstream request exceeded its timeout',
+    );
+  }
+  if (scope.parentSignal.aborted) {
+    return new GatewayHttpError(
+      499,
+      'client_closed_request',
+      'Client disconnected before the upstream request completed',
+    );
+  }
+  return new GatewayHttpError(
+    502,
+    'upstream_connection_error',
+    'Unable to communicate with the configured upstream',
+  );
+}
+
+async function readBoundedText(
+  response: Response,
+  maximumBytes: number,
+  scope: AbortScope,
+): Promise<string> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+    throw new GatewayHttpError(
+      502,
+      'upstream_response_too_large',
+      'Upstream response exceeds the configured safety limit',
+    );
+  }
+  if (!response.body) return '';
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let bytes = 0;
+  let output = '';
+
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      scope.resetTimeout();
+      const value = byteChunk(chunk.value);
+      bytes += value.byteLength;
+      if (bytes > maximumBytes) {
+        throw new GatewayHttpError(
+          502,
+          'upstream_response_too_large',
+          'Upstream response exceeds the configured safety limit',
+        );
+      }
+      output += decoder.decode(value, { stream: true });
+    }
+    output += decoder.decode();
+    return output;
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new GatewayHttpError(
+        502,
+        'upstream_invalid_response',
+        'Upstream response contains invalid UTF-8',
+      );
+    }
+    throw mappedTransportError(error, scope);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function parseJson(text: string, message: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new GatewayHttpError(502, 'upstream_invalid_response', message);
+  }
+}
+
+async function upstreamFailure(
+  response: Response,
+  scope: AbortScope,
+  apiKey?: string,
+): Promise<GatewayHttpError> {
+  let parsed: unknown;
+  try {
+    const text = await readBoundedText(
+      response,
+      MAX_ERROR_RESPONSE_BYTES,
+      scope,
+    );
+    parsed = text.length > 0 ? JSON.parse(text) : undefined;
+  } catch (error) {
+    if (error instanceof GatewayHttpError) throw error;
+  }
+
+  const upstreamMessage = redactSensitiveMessage(
+    upstreamErrorMessage(parsed),
+    apiKey,
+  );
+  const upstreamRequestId = safeUpstreamRequestId(response);
+  const headers = {
+    ...(upstreamRequestId
+      ? { 'x-upstream-request-id': upstreamRequestId }
+      : {}),
+  };
+
+  if (response.status === 401 || response.status === 403) {
+    return new GatewayHttpError(
+      502,
+      'upstream_authentication_failed',
+      'Configured upstream credentials were rejected',
+      headers,
+    );
+  }
+  if (response.status === 429) {
+    const retryAfter = response.headers.get('retry-after');
+    return new GatewayHttpError(
+      429,
+      'upstream_rate_limited',
+      upstreamMessage ?? 'Configured upstream is rate limited',
+      {
+        ...headers,
+        ...(retryAfter && /^\d{1,9}$/.test(retryAfter)
+          ? { 'retry-after': retryAfter }
+          : {}),
+      },
+    );
+  }
+  if (response.status >= 500) {
+    return new GatewayHttpError(
+      502,
+      'upstream_unavailable',
+      'Configured upstream is temporarily unavailable',
+      headers,
+    );
+  }
+  if (response.status >= 400 && response.status < 500) {
+    return new GatewayHttpError(
+      response.status,
+      'upstream_invalid_request',
+      upstreamMessage ?? 'Configured upstream rejected the request',
+      headers,
+    );
+  }
+
+  return new GatewayHttpError(
+    502,
+    'upstream_invalid_response',
+    'Configured upstream returned an unexpected status',
+    headers,
+  );
+}
+
+function canonicalEvents(
+  dataEvents: readonly string[],
+  state: { done: boolean },
+): readonly CanonicalSseEvent[] {
+  const output: CanonicalSseEvent[] = [];
+  for (const data of dataEvents) {
+    if (state.done) {
+      throw new GatewayHttpError(
+        502,
+        'upstream_invalid_stream',
+        'Upstream emitted data after the terminal event',
+      );
+    }
+    const event = canonicalizeChatSseData(data);
+    state.done = event.done;
+    output.push(event);
+  }
+  return output;
+}
+
+async function prepareStreamingBody(
+  response: Response,
+  context: ProviderRequestContext,
+  scope: AbortScope,
+): Promise<Readable> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().includes('text/event-stream')) {
+    scope.cleanup();
+    throw new GatewayHttpError(
+      502,
+      'upstream_invalid_stream',
+      'Upstream streaming response is not server-sent events',
+    );
+  }
+  if (!response.body) {
+    scope.cleanup();
+    throw new GatewayHttpError(
+      502,
+      'upstream_invalid_stream',
+      'Upstream streaming response has no body',
+    );
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new OpenAISseDecoder();
+  const state = { done: false };
+  let initialEvents: readonly CanonicalSseEvent[] = [];
+
+  try {
+    while (initialEvents.length === 0) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        initialEvents = canonicalEvents(decoder.finish(), state);
+        if (initialEvents.length === 0 || !state.done) {
+          throw new GatewayHttpError(
+            502,
+            'upstream_truncated_stream',
+            'Upstream stream ended before a terminal event',
+          );
+        }
+        break;
+      }
+      scope.resetTimeout();
+      initialEvents = canonicalEvents(
+        decoder.push(byteChunk(chunk.value)),
+        state,
+      );
+    }
+  } catch (error) {
+    scope.cleanup();
+    reader.releaseLock();
+    throw mappedTransportError(error, scope);
+  }
+
+  const generator = async function* (): AsyncGenerator<string> {
+    let emitted = false;
+    try {
+      for (const event of initialEvents) {
+        emitted = true;
+        yield event.wire;
+      }
+
+      while (!state.done) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          const finalEvents = canonicalEvents(decoder.finish(), state);
+          for (const event of finalEvents) {
+            emitted = true;
+            yield event.wire;
+          }
+          if (!state.done) {
+            throw new GatewayHttpError(
+              502,
+              'upstream_truncated_stream',
+              'Upstream stream ended before a terminal event',
+            );
+          }
+          break;
+        }
+
+        scope.resetTimeout();
+        for (const event of canonicalEvents(
+          decoder.push(byteChunk(chunk.value)),
+          state,
+        )) {
+          emitted = true;
+          yield event.wire;
+        }
+      }
+    } catch (error) {
+      const mapped = mappedTransportError(error, scope);
+      if (scope.parentSignal.aborted) return;
+      if (!emitted) throw mapped;
+      yield canonicalStreamError(
+        context.requestId,
+        mapped.code,
+        mapped.publicMessage,
+      );
+      if (!state.done) yield 'data: [DONE]\n\n';
+    } finally {
+      scope.cleanup();
+      if (!state.done) {
+        scope.abort();
+        await reader.cancel().catch(() => undefined);
+      }
+      reader.releaseLock();
+    }
+  };
+
+  return Readable.from(generator(), { encoding: 'utf8' });
+}
+
+export class OpenAICompatibleClient implements OpenAICompatibleProvider {
+  constructor(
+    private readonly config: OpenAIUpstreamConfig,
+    private readonly logger: JsonLogger,
+  ) {}
+
+  async listModels(
+    context: ProviderRequestContext,
+  ): Promise<CanonicalModelList> {
+    const scope = createAbortScope(context.signal, this.config.timeoutMs);
+    const startedAt = Date.now();
+    this.logger.info('upstream_request_started', {
+      requestId: context.requestId,
+      operation: 'list_models',
+    });
+
+    try {
+      const response = await fetch(endpoint(this.config.baseUrl, 'models'), {
+        method: 'GET',
+        headers: this.headers(),
+        redirect: 'error',
+        signal: scope.signal,
+      });
+      if (!response.ok) {
+        throw await upstreamFailure(response, scope, this.config.apiKey);
+      }
+      const text = await readBoundedText(
+        response,
+        MAX_JSON_RESPONSE_BYTES,
+        scope,
+      );
+      const models = normalizeModelList(
+        parseJson(text, 'Upstream returned malformed model JSON'),
+      );
+      this.logger.info('upstream_request_completed', {
+        requestId: context.requestId,
+        operation: 'list_models',
+        statusCode: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return models;
+    } catch (error) {
+      throw mappedTransportError(error, scope);
+    } finally {
+      scope.cleanup();
+    }
+  }
+
+  async createChatCompletion(
+    request: ChatCompletionRequest,
+    context: ProviderRequestContext,
+  ): Promise<ChatCompletionResult> {
+    const scope = createAbortScope(context.signal, this.config.timeoutMs);
+    const startedAt = Date.now();
+    this.logger.info('upstream_request_started', {
+      requestId: context.requestId,
+      operation: 'chat_completions',
+      stream: request.stream === true,
+      model: request.model,
+    });
+
+    try {
+      const response = await fetch(
+        endpoint(this.config.baseUrl, 'chat/completions'),
+        {
+          method: 'POST',
+          headers: {
+            ...this.headers(),
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(request),
+          redirect: 'error',
+          signal: scope.signal,
+        },
+      );
+      if (!response.ok) {
+        throw await upstreamFailure(response, scope, this.config.apiKey);
+      }
+
+      if (request.stream === true) {
+        const body = await prepareStreamingBody(response, context, scope);
+        this.logger.info('upstream_stream_started', {
+          requestId: context.requestId,
+          operation: 'chat_completions',
+          statusCode: response.status,
+          durationMs: Date.now() - startedAt,
+        });
+        return { stream: true, body };
+      }
+
+      const text = await readBoundedText(
+        response,
+        MAX_JSON_RESPONSE_BYTES,
+        scope,
+      );
+      const body = normalizeChatCompletionResponse(
+        parseJson(text, 'Upstream returned malformed chat completion JSON'),
+        request.model,
+      );
+      this.logger.info('upstream_request_completed', {
+        requestId: context.requestId,
+        operation: 'chat_completions',
+        statusCode: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return { stream: false, body };
+    } catch (error) {
+      scope.cleanup();
+      throw mappedTransportError(error, scope);
+    } finally {
+      if (request.stream !== true) scope.cleanup();
+    }
+  }
+
+  private headers(): Readonly<Record<string, string>> {
+    return {
+      accept: 'application/json, text/event-stream',
+      ...(this.config.apiKey
+        ? { authorization: `Bearer ${this.config.apiKey}` }
+        : {}),
+    };
+  }
+}
