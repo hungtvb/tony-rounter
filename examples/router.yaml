@@ -1,0 +1,46 @@
+version: 1
+defaultProfile: coding
+
+providers:
+  primary:
+    kind: openai-compatible
+
+models:
+  fast:
+    provider: primary
+    upstreamModel: fast-model
+    capabilities:
+      tools: true
+      parallelToolCalls: true
+      vision: false
+      structuredOutput: true
+      contextTokens: 128000
+
+  vision:
+    provider: primary
+    upstreamModel: vision-model
+    capabilities:
+      tools: true
+      parallelToolCalls: false
+      vision: true
+      structuredOutput: true
+      contextTokens: 200000
+
+routes:
+  fast-primary:
+    model: fast
+    enabled: true
+    priority: 20
+
+  vision-primary:
+    model: vision
+    enabled: true
+    priority: 10
+
+profiles:
+  coding:
+    routes:
+      - route: fast-primary
+        priority: 100
+      - route: vision-primary
+        priority: 50
