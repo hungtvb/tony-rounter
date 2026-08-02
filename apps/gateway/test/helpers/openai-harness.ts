@@ -7,7 +7,9 @@ export const UPSTREAM_KEY = 'upstream-key-'.padEnd(48, 'u');
 
 export interface InjectedTestResponse {
   readonly statusCode: number;
-  readonly headers: Readonly<Record<string, string | string[] | undefined>>;
+  readonly headers: Readonly<
+    Record<string, string | string[] | number | undefined>
+  >;
   readonly body: string;
   json(): unknown;
 }
