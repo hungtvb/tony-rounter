@@ -48,6 +48,25 @@ jobs:
               raise SystemExit('expected frozen permit was not found')
           circuit.write_text(circuit_text.replace(old_permit, new_permit))
 
+          fallback = Path('packages/core/src/runtime/fallback.ts')
+          fallback_text = fallback.read_text()
+          old_retry = '''          if (
+            failure.retryable &&
+            hasRouteAttempt &&
+            hasTotalAttempt &&
+            fitsDeadline
+          ) {'''
+          new_retry = '''          if (
+            circuit.state !== 'open' &&
+            failure.retryable &&
+            hasRouteAttempt &&
+            hasTotalAttempt &&
+            fitsDeadline
+          ) {'''
+          if old_retry not in fallback_text:
+              raise SystemExit('expected retry condition was not found')
+          fallback.write_text(fallback_text.replace(old_retry, new_retry))
+
           test = Path('packages/core/test/runtime-fallback.test.ts')
           test_text = test.read_text()
           directive = (
