@@ -22,6 +22,26 @@ export class RoutingSelectionError extends Error {
   override readonly name = 'RoutingSelectionError';
 }
 
+function compareRouteId(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function snapshotRequirements(
+  required: RequiredCapabilities,
+): RequiredCapabilities {
+  return Object.freeze({
+    tools: required.tools,
+    parallelToolCalls: required.parallelToolCalls,
+    vision: required.vision,
+    structuredOutput: required.structuredOutput,
+    ...(required.minimumContextTokens !== undefined
+      ? { minimumContextTokens: required.minimumContextTokens }
+      : {}),
+  });
+}
+
 function capabilityRejections(
   capabilities: ModelCapabilities,
   required: RequiredCapabilities,
@@ -87,7 +107,9 @@ function routeRejections(
   }
   rejections.push(...capabilityRejections(model.capabilities, required));
 
-  return rejections;
+  return Object.freeze(
+    rejections.map((rejection) => Object.freeze({ ...rejection })),
+  );
 }
 
 function compareAccepted(
@@ -97,7 +119,7 @@ function compareAccepted(
   const leftScore = left.score;
   const rightScore = right.score;
   if (!leftScore || !rightScore) {
-    return left.routeId.localeCompare(right.routeId);
+    return compareRouteId(left.routeId, right.routeId);
   }
 
   if (leftScore.profilePriority !== rightScore.profilePriority) {
@@ -106,7 +128,7 @@ function compareAccepted(
   if (leftScore.routePriority !== rightScore.routePriority) {
     return rightScore.routePriority - leftScore.routePriority;
   }
-  return left.routeId.localeCompare(right.routeId);
+  return compareRouteId(left.routeId, right.routeId);
 }
 
 function selectedRoute(
@@ -147,11 +169,12 @@ export function selectRoute(
     throw new RoutingSelectionError(`Unknown routing profile: ${profileId}`);
   }
 
+  const requiredCapabilities = snapshotRequirements(input.requiredCapabilities);
   const profileRoutes = new Map(
     profile.routes.map((route) => [route.routeId, route] as const),
   );
   const candidates = Object.values(config.routes)
-    .sort((left, right) => left.id.localeCompare(right.id))
+    .sort((left, right) => compareRouteId(left.id, right.id))
     .map((route): RouteCandidateTrace => {
       const model = config.models[route.modelId];
       if (!model) {
@@ -166,7 +189,7 @@ export function selectRoute(
         model,
         profileRoute,
         input.routeStates?.[route.id],
-        input.requiredCapabilities,
+        requiredCapabilities,
       );
       const score: RouteScore | undefined = profileRoute
         ? Object.freeze({
@@ -180,7 +203,7 @@ export function selectRoute(
         modelId: model.id,
         providerId: model.providerId,
         accepted: rejections.length === 0,
-        rejections: Object.freeze(rejections),
+        rejections,
         ...(score ? { score } : {}),
       });
     });
@@ -193,7 +216,7 @@ export function selectRoute(
 
   return Object.freeze({
     profileId,
-    requiredCapabilities: input.requiredCapabilities,
+    requiredCapabilities,
     ...(winner
       ? {
           selected: selectedRoute(
