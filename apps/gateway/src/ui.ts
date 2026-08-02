@@ -6,9 +6,7 @@ import { UI_HTML } from './ui-assets/html.js';
 import { UI_CSS } from './ui-assets/styles.js';
 
 export type UiProviderMode =
-  | 'openai-compatible'
-  | 'static-registry'
-  | 'unconfigured';
+  'openai-compatible' | 'static-registry' | 'unconfigured';
 
 export interface UiRuntimeInfo {
   readonly version: string;
