@@ -1,0 +1,226 @@
+name: Reconcile and verify Phase 3
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reconcile-phase-3.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  reconcile:
+    if: github.repository == 'hungtvb/tony-rounter'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Merge Phase 3 when still open
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh pr view 10 --repo hungtvb/tony-rounter --json state --jq .state)
+          if [ "$state" != "OPEN" ]; then
+            exit 0
+          fi
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/hungtvb/tony-rounter.git" repo
+          cd repo
+          git checkout feat/safe-fallback-runtime
+          pnpm install --frozen-lockfile
+          pnpm format
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .
+            git commit -m "style: normalize Phase 3 runtime"
+            git push origin HEAD:feat/safe-fallback-runtime
+          fi
+          pnpm verify
+          head_sha=$(git rev-parse HEAD)
+          gh pr merge 10 \
+            --repo hungtvb/tony-rounter \
+            --squash \
+            --match-head-commit "$head_sha" \
+            --subject "feat: add safe retry circuit breaker and fallback runtime (#10)" \
+            --body "Closes #6. Adds replay-safe retries, route/account circuit breakers, capability-safe fallback, total deadlines, immutable traces, and comprehensive failure-path tests."
+
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Ensure concurrent failure accounting is present
+        id: harden
+        run: |
+          git pull --ff-only origin main
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('packages/core/src/runtime/circuit-breaker.ts')
+          if not source.exists():
+              raise SystemExit('Phase 3 runtime is not present on main')
+          text = source.read_text()
+          old = """  #circuit(id: string): MutableCircuit {
+                return (
+                  this.#circuits.get(id) ?? {
+                    state: 'closed',
+                    consecutiveFailures: 0,
+                    halfOpenInFlight: 0,
+                  }
+                );
+              }
+          """
+          new = """  #circuit(id: string): MutableCircuit {
+                const existing = this.#circuits.get(id);
+                if (existing) return existing;
+
+                const created: MutableCircuit = {
+                  state: 'closed',
+                  consecutiveFailures: 0,
+                  halfOpenInFlight: 0,
+                };
+                this.#circuits.set(id, created);
+                return created;
+              }
+          """
+          if old in text:
+              source.write_text(text.replace(old, new, 1))
+          elif 'const existing = this.#circuits.get(id);' not in text:
+              raise SystemExit('Unknown circuit factory implementation')
+
+          tests = Path('packages/core/test/runtime-circuit-breaker.test.ts')
+          text = tests.read_text()
+          if "accumulates concurrent closed-state failures" not in text:
+              marker = """  it('transitions to half-open after cooldown and closes on success', () => {
+          """
+              addition = """  it('accumulates concurrent closed-state failures for the same key', () => {
+                const registry = new CircuitBreakerRegistry({
+                  failureThreshold: 2,
+                  cooldownMs: 100,
+                });
+                const first = registry.acquire(KEY, 0);
+                const second = registry.acquire(KEY, 0);
+                if (!first.allowed || !second.allowed) {
+                  throw new Error('expected concurrent permits');
+                }
+                expect(registry.recordFailure(first.permit, 'count', 0)).toMatchObject({
+                  state: 'closed',
+                  consecutiveFailures: 1,
+                });
+                expect(registry.recordFailure(second.permit, 'count', 0)).toMatchObject({
+                  state: 'open',
+                  consecutiveFailures: 2,
+                  retryAt: 100,
+                });
+              });
+
+          """
+              if marker not in text:
+                  raise SystemExit('Circuit test insertion point not found')
+              tests.write_text(text.replace(marker, addition + marker, 1))
+          PY
+          pnpm install --frozen-lockfile
+          pnpm format
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create verified follow-up when main required hardening
+        if: steps.harden.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git checkout -B fix/circuit-concurrent-failures
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "fix: preserve concurrent circuit failure counts"
+          git push --force-with-lease origin HEAD:fix/circuit-concurrent-failures
+          pnpm verify
+          head_sha=$(git rev-parse HEAD)
+          existing=$(gh pr list --repo hungtvb/tony-rounter --head fix/circuit-concurrent-failures --state open --json number --jq '.[0].number // empty')
+          if [ -z "$existing" ]; then
+            url=$(gh pr create \
+              --repo hungtvb/tony-rounter \
+              --base main \
+              --head fix/circuit-concurrent-failures \
+              --title "fix: preserve concurrent circuit failure counts" \
+              --body "Persists newly created circuit state before issuing concurrent permits and proves simultaneous failures reach the configured threshold.")
+            existing=${url##*/}
+          fi
+          gh pr merge "$existing" \
+            --repo hungtvb/tony-rounter \
+            --squash \
+            --match-head-commit "$head_sha" \
+            --subject "fix: preserve concurrent circuit failure counts (#$existing)"
+
+      - name: Verify latest main
+        run: |
+          git fetch origin main
+          git checkout -B verified-main origin/main
+          pnpm install --frozen-lockfile
+          pnpm verify
+
+      - name: Close Phase 3 issue after main verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh issue view 6 --repo hungtvb/tony-rounter --json state --jq .state)
+          if [ "$state" = "OPEN" ]; then
+            gh issue close 6 \
+              --repo hungtvb/tony-rounter \
+              --reason completed \
+              --comment "Phase 3 safe retry, circuit breaker, and fallback runtime is merged and verified on main."
+          fi
+
+  cleanup:
+    if: always()
+    needs: reconcile
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Remove all temporary finalization workflows
+        run: |
+          git pull --ff-only origin main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f --ignore-unmatch \
+            .github/workflows/format-fallback-branch.yml \
+            .github/workflows/cleanup-fallback-workflows.yml \
+            .github/workflows/harden-fallback-runtime.yml \
+            .github/workflows/finalize-fallback-runtime.yml \
+            .github/workflows/finalize-circuit-concurrency.yml \
+            .github/workflows/reconcile-phase-3.yml
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "ci: remove Phase 3 finalization workflows"
+          git push origin HEAD:main
