@@ -51,7 +51,7 @@ jobs:
 
           old = '      if (signal.aborted) return Promise.reject(signal.reason);'
           new = '''      if (signal.aborted) {
-            const reason = signal.reason;
+            const reason = signal.reason as unknown;
             return Promise.reject(
               reason instanceof Error
                 ? reason
