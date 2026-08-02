@@ -16,7 +16,7 @@ export function installRequestDeadline(
     }
   };
 
-  app.addHook('onRequest', async (request, reply) => {
+  app.addHook('onRequest', (request, reply) => {
     const timer = setTimeout(() => {
       if (!reply.sent) {
         sendGatewayError(
@@ -30,13 +30,16 @@ export function installRequestDeadline(
     }, timeoutMs);
     timer.unref();
     timers.set(request, timer);
+    return Promise.resolve();
   });
 
-  app.addHook('onResponse', async (request) => {
+  app.addHook('onResponse', (request) => {
     clearTimer(request);
+    return Promise.resolve();
   });
 
-  app.addHook('onError', async (request) => {
+  app.addHook('onError', (request) => {
     clearTimer(request);
+    return Promise.resolve();
   });
 }
