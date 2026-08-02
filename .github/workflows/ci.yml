@@ -32,8 +32,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Print canonical Prettier patch
-        run: |
-          pnpm exec prettier --write apps/gateway/src/telemetry.ts apps/gateway/src/ui.ts
-          git diff -- apps/gateway/src/telemetry.ts apps/gateway/src/ui.ts
-          exit 1
+      - name: Verify
+        run: pnpm verify
