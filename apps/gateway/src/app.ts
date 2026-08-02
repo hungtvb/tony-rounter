@@ -1,21 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
-import Fastify, {
-  type FastifyInstance,
-  type FastifyRequest,
-} from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 
 import { installBearerAuthentication } from './auth.js';
 import type { GatewayConfig } from './config.js';
 import { installRequestDeadline } from './deadline.js';
-import {
-  normalizeFastifyError,
-  sendGatewayError,
-} from './errors.js';
-import {
-  createJsonLogger,
-  type JsonLogger,
-} from './logger.js';
+import { normalizeFastifyError, sendGatewayError } from './errors.js';
+import { createJsonLogger, type JsonLogger } from './logger.js';
 
 export interface GatewayModel {
   readonly id: string;
@@ -36,8 +27,7 @@ function requestPath(request: FastifyRequest): string {
 export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   const { config } = options;
   const logger =
-    options.logger ??
-    createJsonLogger({ sensitiveValues: [config.token] });
+    options.logger ?? createJsonLogger({ sensitiveValues: [config.token] });
   const models = [...(options.models ?? [])];
 
   const app = Fastify({

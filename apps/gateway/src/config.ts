@@ -66,7 +66,9 @@ function validateToken(token: string): string {
     );
   }
   if (/\s/.test(normalized)) {
-    throw new GatewayConfigError('TONY_ROUTER_TOKEN must not contain whitespace');
+    throw new GatewayConfigError(
+      'TONY_ROUTER_TOKEN must not contain whitespace',
+    );
   }
   return normalized;
 }
@@ -138,7 +140,13 @@ export async function loadGatewayConfig(
 
   return Object.freeze({
     host,
-    port: parseInteger('TONY_ROUTER_PORT', env.TONY_ROUTER_PORT, 8787, 0, 65_535),
+    port: parseInteger(
+      'TONY_ROUTER_PORT',
+      env.TONY_ROUTER_PORT,
+      8787,
+      0,
+      65_535,
+    ),
     allowNonLoopback,
     token: credential.token,
     tokenFile,

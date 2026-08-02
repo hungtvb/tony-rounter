@@ -4,19 +4,16 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  GatewayConfigError,
-  loadGatewayConfig,
-} from '../src/index.js';
+import { GatewayConfigError, loadGatewayConfig } from '../src/index.js';
 
 const TOKEN = 'configured-token-'.padEnd(48, 'y');
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 

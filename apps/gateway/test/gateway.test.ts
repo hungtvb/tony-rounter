@@ -14,9 +14,7 @@ import {
 const TOKEN = 'test-token-'.padEnd(48, 'x');
 const apps: FastifyInstance[] = [];
 
-function config(
-  overrides: Partial<GatewayConfig> = {},
-): GatewayConfig {
+function config(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
     host: '127.0.0.1',
     port: 0,

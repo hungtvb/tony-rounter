@@ -1,7 +1,6 @@
 import type { Writable } from 'node:stream';
 
-const SENSITIVE_KEY =
-  /authorization|cookie|token|secret|password|api[-_]?key/i;
+const SENSITIVE_KEY = /authorization|cookie|token|secret|password|api[-_]?key/i;
 
 export interface JsonLogger {
   info(message: string, context?: Readonly<Record<string, unknown>>): void;
@@ -15,7 +14,10 @@ export interface JsonLoggerOptions {
   readonly now?: () => Date;
 }
 
-function redactString(value: string, sensitiveValues: readonly string[]): string {
+function redactString(
+  value: string,
+  sensitiveValues: readonly string[],
+): string {
   let redacted = value;
   for (const sensitiveValue of sensitiveValues) {
     if (sensitiveValue.length > 0) {
@@ -62,12 +64,7 @@ function sanitize(
     seen.add(value);
     const output: Record<string, unknown> = {};
     for (const [entryKey, entryValue] of Object.entries(value)) {
-      output[entryKey] = sanitize(
-        entryValue,
-        sensitiveValues,
-        seen,
-        entryKey,
-      );
+      output[entryKey] = sanitize(entryValue, sensitiveValues, seen, entryKey);
     }
     return output;
   }

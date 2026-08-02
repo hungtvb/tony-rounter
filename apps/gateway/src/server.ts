@@ -1,20 +1,13 @@
 import { buildGateway } from './app.js';
 import { loadGatewayConfig } from './config.js';
 import { createJsonLogger } from './logger.js';
-import {
-  createGracefulShutdown,
-  installSignalHandlers,
-} from './shutdown.js';
+import { createGracefulShutdown, installSignalHandlers } from './shutdown.js';
 
 async function main(): Promise<void> {
   const config = await loadGatewayConfig();
   const logger = createJsonLogger({ sensitiveValues: [config.token] });
   const app = buildGateway({ config, logger });
-  const shutdown = createGracefulShutdown(
-    app,
-    config.shutdownGraceMs,
-    logger,
-  );
+  const shutdown = createGracefulShutdown(app, config.shutdownGraceMs, logger);
   const uninstallSignals = installSignalHandlers(shutdown, logger);
 
   try {
