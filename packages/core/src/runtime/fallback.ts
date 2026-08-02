@@ -10,10 +10,7 @@ import {
   type CircuitKey,
   type CircuitSnapshot,
 } from './circuit-breaker.js';
-import {
-  classifyProviderFailure,
-  type ProviderFailure,
-} from './failure.js';
+import { classifyProviderFailure, type ProviderFailure } from './failure.js';
 
 export interface FallbackPolicy {
   readonly maxAttemptsPerRoute: number;
@@ -117,7 +114,9 @@ export class RoutedExecutionError extends Error {
 
 export interface ExecuteRoutedRequestInput<T> {
   readonly config: RoutingConfig;
-  readonly requiredCapabilities: Parameters<typeof selectRoute>[1]['requiredCapabilities'];
+  readonly requiredCapabilities: Parameters<
+    typeof selectRoute
+  >[1]['requiredCapabilities'];
   readonly operation: RoutedOperation<T>;
   readonly policy: FallbackPolicy;
   readonly circuitBreaker: CircuitBreakerRegistry;
@@ -283,13 +282,9 @@ function executionError(
   failure?: ProviderFailure,
   cause?: unknown,
 ): RoutedExecutionError {
-  return new RoutedExecutionError(
-    code,
-    message,
-    freezeTrace(trace),
-    failure,
-    { ...(cause !== undefined ? { cause } : {}) },
-  );
+  return new RoutedExecutionError(code, message, freezeTrace(trace), failure, {
+    ...(cause !== undefined ? { cause } : {}),
+  });
 }
 
 export async function executeRoutedRequest<T>(
@@ -299,7 +294,10 @@ export async function executeRoutedRequest<T>(
   const now = input.now ?? Date.now;
   const sleep = input.sleep ?? defaultSleep;
   const startedAt = now();
-  const abortScope = createExecutionAbortScope(input.signal, policy.totalDeadlineMs);
+  const abortScope = createExecutionAbortScope(
+    input.signal,
+    policy.totalDeadlineMs,
+  );
   const routeStates = stateCopy(input.routeStates);
   const trace: ExecutionTraceEvent[] = [];
   let totalAttempts = 0;
@@ -310,11 +308,15 @@ export async function executeRoutedRequest<T>(
     (input.sessionId ? input.affinityStore?.get(input.sessionId) : undefined);
 
   const assertActive = (): void => {
-    if (!abortScope.signal.aborted && now() - startedAt < policy.totalDeadlineMs) {
+    if (
+      !abortScope.signal.aborted &&
+      now() - startedAt < policy.totalDeadlineMs
+    ) {
       return;
     }
     throw executionError(
-      abortScope.abortedByDeadline() || now() - startedAt >= policy.totalDeadlineMs
+      abortScope.abortedByDeadline() ||
+        now() - startedAt >= policy.totalDeadlineMs
         ? 'deadline_exceeded'
         : 'request_aborted',
       abortScope.abortedByDeadline()
@@ -332,7 +334,9 @@ export async function executeRoutedRequest<T>(
       const decision = selectRoute(input.config, {
         requiredCapabilities: input.requiredCapabilities,
         routeStates,
-        ...(input.profileId !== undefined ? { profileId: input.profileId } : {}),
+        ...(input.profileId !== undefined
+          ? { profileId: input.profileId }
+          : {}),
         ...(storedAffinity !== undefined
           ? { affinityRouteId: storedAffinity }
           : {}),
@@ -399,7 +403,9 @@ export async function executeRoutedRequest<T>(
             signal: abortScope.signal,
           });
           assertActive();
-          const circuit = input.circuitBreaker.recordSuccess(acquisition.permit);
+          const circuit = input.circuitBreaker.recordSuccess(
+            acquisition.permit,
+          );
           trace.push({
             type: 'attempt_succeeded',
             routeId: route.routeId,

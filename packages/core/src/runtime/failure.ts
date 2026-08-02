@@ -30,11 +30,7 @@ export interface ProviderExecutionErrorOptions {
 }
 
 function boundedRetryAfter(value: unknown): number | undefined {
-  if (
-    typeof value !== 'number' ||
-    !Number.isSafeInteger(value) ||
-    value < 0
-  ) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     return undefined;
   }
   return value;

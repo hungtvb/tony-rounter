@@ -140,13 +140,19 @@ export class CircuitBreakerRegistry {
     }
 
     if (circuit.state === 'open') {
-      return Object.freeze({ allowed: false, snapshot: snapshot(key, circuit) });
+      return Object.freeze({
+        allowed: false,
+        snapshot: snapshot(key, circuit),
+      });
     }
     if (
       circuit.state === 'half_open' &&
       circuit.halfOpenInFlight >= this.config.halfOpenMaxAttempts
     ) {
-      return Object.freeze({ allowed: false, snapshot: snapshot(key, circuit) });
+      return Object.freeze({
+        allowed: false,
+        snapshot: snapshot(key, circuit),
+      });
     }
 
     if (circuit.state === 'half_open') circuit.halfOpenInFlight += 1;

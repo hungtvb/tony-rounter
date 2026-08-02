@@ -199,9 +199,9 @@ describe('executeRoutedRequest', () => {
 
     expect(result.value).toBe('backup-success');
     expect(calls).toEqual(['primary', 'backup']);
-    expect(
-      result.trace.some((event) => event.type === 'retry_scheduled'),
-    ).toBe(false);
+    expect(result.trace.some((event) => event.type === 'retry_scheduled')).toBe(
+      false,
+    );
     expect(
       result.trace.some((event) => event.type === 'fallback_scheduled'),
     ).toBe(true);
@@ -320,9 +320,9 @@ describe('executeRoutedRequest', () => {
 
     expect(result.value).toBe('backup');
     expect(calls).toEqual(['primary', 'backup']);
-    expect(
-      result.trace.some((event) => event.type === 'retry_scheduled'),
-    ).toBe(false);
+    expect(result.trace.some((event) => event.type === 'retry_scheduled')).toBe(
+      false,
+    );
   });
 
   it('never replays after output becomes visible', async () => {
@@ -458,9 +458,9 @@ describe('executeRoutedRequest', () => {
     );
 
     expect(calls).toEqual(['primary', 'backup']);
-    expect(error.trace.filter((event) => event.type === 'attempt_started')).toHaveLength(
-      2,
-    );
+    expect(
+      error.trace.filter((event) => event.type === 'attempt_started'),
+    ).toHaveLength(2);
   });
 
   it('cuts off an operation that does not cooperate with the abort signal', async () => {
@@ -508,9 +508,9 @@ describe('executeRoutedRequest', () => {
 
     const error = await expectExecutionError(execution, 'request_aborted');
     expect(calls).toEqual(['primary']);
-    expect(error.trace.some((event) => event.type === 'fallback_scheduled')).toBe(
-      false,
-    );
+    expect(
+      error.trace.some((event) => event.type === 'fallback_scheduled'),
+    ).toBe(false);
   });
 
   it('rejects invalid retry policy before dispatch', async () => {

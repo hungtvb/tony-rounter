@@ -158,8 +158,7 @@ describe('CircuitBreakerRegistry', () => {
         new CircuitBreakerRegistry({ failureThreshold: 0, cooldownMs: 100 }),
     ).toThrow(RangeError);
     expect(
-      () =>
-        new CircuitBreakerRegistry({ failureThreshold: 1, cooldownMs: -1 }),
+      () => new CircuitBreakerRegistry({ failureThreshold: 1, cooldownMs: -1 }),
     ).toThrow(RangeError);
 
     const registry = new CircuitBreakerRegistry({

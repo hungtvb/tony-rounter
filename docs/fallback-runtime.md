@@ -20,7 +20,7 @@ Circuit state is isolated by both `routeId` and optional `accountId`. Each circu
 
 ```text
 closed -> open -> half_open -> closed
-                   |          
+                   |
                    +-> open on probe failure
 ```
 
