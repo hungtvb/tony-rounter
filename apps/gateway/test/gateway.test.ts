@@ -121,7 +121,7 @@ describe('secure gateway transport', () => {
     const app = track(
       buildGateway({ config: config(), logger: createNullLogger() }),
     );
-    app.post('/echo', async (request) => request.body);
+    app.post('/echo', (request) => request.body);
 
     const response = await app.inject({
       method: 'POST',
@@ -146,7 +146,7 @@ describe('secure gateway transport', () => {
         logger: createNullLogger(),
       }),
     );
-    app.post('/echo', async (request) => request.body);
+    app.post('/echo', (request) => request.body);
 
     const response = await app.inject({
       method: 'POST',
@@ -191,8 +191,19 @@ describe('secure gateway transport', () => {
   it('keeps bearer tokens out of structured logs and internal errors', async () => {
     let output = '';
     const stream = new Writable({
-      write(chunk, _encoding, callback) {
-        output += chunk.toString();
+      write(
+        chunk: unknown,
+        _encoding: BufferEncoding,
+        callback: (error?: Error | null) => void,
+      ) {
+        if (typeof chunk === 'string') {
+          output += chunk;
+        } else if (Buffer.isBuffer(chunk)) {
+          output += chunk.toString('utf8');
+        } else {
+          callback(new TypeError('Unexpected log chunk type'));
+          return;
+        }
         callback();
       },
     });
@@ -202,7 +213,7 @@ describe('secure gateway transport', () => {
       now: () => new Date('2026-08-02T00:00:00.000Z'),
     });
     const app = track(buildGateway({ config: config(), logger }));
-    app.get('/explode', async () => {
+    app.get('/explode', () => {
       throw new Error(`upstream credential ${TOKEN} failed`);
     });
 
