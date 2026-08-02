@@ -25,7 +25,7 @@ function config(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
     bodyLimitBytes: 1024,
     requestTimeoutMs: 100,
     shutdownGraceMs: 100,
-    version: '0.1.0',
+    version: '0.2.0',
     ...overrides,
   };
 }
@@ -58,7 +58,7 @@ describe('secure gateway transport', () => {
     expect(response.json()).toEqual({
       status: 'ok',
       service: 'tony-router',
-      version: '0.1.0',
+      version: '0.2.0',
     });
   });
 
@@ -88,7 +88,7 @@ describe('secure gateway transport', () => {
     }
   });
 
-  it('returns configured models for a valid bearer token', async () => {
+  it('returns configured static models when no upstream is configured', async () => {
     const app = track(
       buildGateway({
         config: config(),
@@ -114,6 +114,27 @@ describe('secure gateway transport', () => {
           owned_by: 'tony-router',
         },
       ],
+    });
+  });
+
+  it('returns a normalized error when chat has no configured provider', async () => {
+    const app = track(
+      buildGateway({ config: config(), logger: createNullLogger() }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: {
+        ...authorization(),
+        'content-type': 'application/json',
+      },
+      payload: { model: 'test', messages: [] },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      error: { code: 'provider_not_configured' },
     });
   });
 
