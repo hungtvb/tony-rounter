@@ -1,6 +1,6 @@
 {
   "name": "@tony-router/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -15,5 +15,8 @@
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "yaml": "2.9.0"
   }
 }
