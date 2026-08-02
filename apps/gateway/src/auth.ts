@@ -17,13 +17,22 @@ function bearerToken(header: string | undefined): string | undefined {
   return token.length > 0 ? token : undefined;
 }
 
+function isPublicPath(pathname: string): boolean {
+  return (
+    pathname === '/' ||
+    pathname === '/health' ||
+    pathname === '/ui' ||
+    pathname.startsWith('/ui/')
+  );
+}
+
 export function installBearerAuthentication(
   app: FastifyInstance,
   expectedToken: string,
 ): void {
   app.addHook('onRequest', async (request, reply) => {
-    const pathname = request.url.split('?', 1)[0];
-    if (pathname === '/health') return;
+    const pathname = request.url.split('?', 1)[0] ?? '/';
+    if (isPublicPath(pathname)) return;
 
     const candidate = bearerToken(request.headers.authorization);
     if (candidate && matchesToken(candidate, expectedToken)) return;
