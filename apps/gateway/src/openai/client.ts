@@ -52,6 +52,17 @@ interface AbortScope {
   readonly cleanup: () => void;
 }
 
+function byteChunk(value: unknown): Uint8Array {
+  if (!(value instanceof Uint8Array)) {
+    throw new GatewayHttpError(
+      502,
+      'upstream_invalid_response',
+      'Upstream emitted a non-byte response chunk',
+    );
+  }
+  return value;
+}
+
 function createAbortScope(
   parentSignal: AbortSignal,
   timeoutMs: number,
@@ -94,10 +105,7 @@ function createAbortScope(
   };
 }
 
-function endpoint(
-  baseUrl: string,
-  resource: 'models' | 'chat/completions',
-): string {
+function endpoint(baseUrl: string, resource: 'models' | 'chat/completions'): string {
   const url = new URL(`${baseUrl}/`);
   const basePath = url.pathname.replace(/\/+$/, '');
   url.pathname = basePath.endsWith('/v1')
@@ -116,10 +124,8 @@ function safeUpstreamRequestId(response: Response): string | undefined {
     : undefined;
 }
 
-function mappedTransportError(
-  error: unknown,
-  scope: AbortScope,
-): GatewayHttpError {
+function mappedTransportError(error: unknown, scope: AbortScope): GatewayHttpError {
+  if (error instanceof GatewayHttpError) return error;
   if (scope.timedOut()) {
     return new GatewayHttpError(
       504,
@@ -134,7 +140,6 @@ function mappedTransportError(
       'Client disconnected before the upstream request completed',
     );
   }
-  if (error instanceof GatewayHttpError) return error;
   return new GatewayHttpError(
     502,
     'upstream_connection_error',
@@ -167,7 +172,8 @@ async function readBoundedText(
       const chunk = await reader.read();
       if (chunk.done) break;
       scope.resetTimeout();
-      bytes += chunk.value.byteLength;
+      const value = byteChunk(chunk.value);
+      bytes += value.byteLength;
       if (bytes > maximumBytes) {
         throw new GatewayHttpError(
           502,
@@ -175,11 +181,18 @@ async function readBoundedText(
           'Upstream response exceeds the configured safety limit',
         );
       }
-      output += decoder.decode(chunk.value, { stream: true });
+      output += decoder.decode(value, { stream: true });
     }
     output += decoder.decode();
     return output;
   } catch (error) {
+    if (error instanceof TypeError) {
+      throw new GatewayHttpError(
+        502,
+        'upstream_invalid_response',
+        'Upstream response contains invalid UTF-8',
+      );
+    }
     throw mappedTransportError(error, scope);
   } finally {
     reader.releaseLock();
@@ -328,7 +341,10 @@ async function prepareStreamingBody(
         break;
       }
       scope.resetTimeout();
-      initialEvents = canonicalEvents(decoder.push(chunk.value), state);
+      initialEvents = canonicalEvents(
+        decoder.push(byteChunk(chunk.value)),
+        state,
+      );
     }
   } catch (error) {
     scope.cleanup();
@@ -363,7 +379,10 @@ async function prepareStreamingBody(
         }
 
         scope.resetTimeout();
-        for (const event of canonicalEvents(decoder.push(chunk.value), state)) {
+        for (const event of canonicalEvents(
+          decoder.push(byteChunk(chunk.value)),
+          state,
+        )) {
           emitted = true;
           yield event.wire;
         }
