@@ -5,6 +5,13 @@ import type { GatewayConfig } from '../../src/index.js';
 export const GATEWAY_TOKEN = 'gateway-token-'.padEnd(48, 'g');
 export const UPSTREAM_KEY = 'upstream-key-'.padEnd(48, 'u');
 
+export interface InjectedTestResponse {
+  readonly statusCode: number;
+  readonly headers: Readonly<Record<string, string | string[] | undefined>>;
+  readonly body: string;
+  json(): unknown;
+}
+
 export function authorization(): Readonly<Record<string, string>> {
   return { authorization: `Bearer ${GATEWAY_TOKEN}` };
 }
@@ -61,7 +68,7 @@ export function createOpenAITestHarness(): OpenAITestHarness {
 export async function chat(
   app: FastifyInstance,
   payload: Readonly<Record<string, unknown>>,
-) {
+): Promise<InjectedTestResponse> {
   return app.inject({
     method: 'POST',
     url: '/v1/chat/completions',
