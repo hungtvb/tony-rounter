@@ -44,7 +44,9 @@ function sanitize(
     return value;
   }
   if (typeof value === 'bigint') return value.toString();
-  if (typeof value === 'function') return `[FUNCTION ${value.name || 'anonymous'}]`;
+  if (typeof value === 'function') {
+    return `[FUNCTION ${value.name || 'anonymous'}]`;
+  }
   if (typeof value === 'symbol') return value.description ?? '[SYMBOL]';
   if (value instanceof Error) {
     return {
