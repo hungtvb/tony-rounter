@@ -50,10 +50,7 @@ function allowedKeys(
 
 function identifier(value: unknown, path: string): string {
   if (typeof value !== 'string' || !ID_PATTERN.test(value)) {
-    return fail(
-      path,
-      'must match /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/',
-    );
+    return fail(path, 'must match /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/');
   }
   return value;
 }
@@ -145,10 +142,13 @@ function parseCapabilities(value: unknown, path: string): ModelCapabilities {
   });
 }
 
-function parseProviders(value: unknown): Readonly<Record<string, RoutingProvider>> {
+function parseProviders(
+  value: unknown,
+): Readonly<Record<string, RoutingProvider>> {
   const input = record(value, 'providers');
   const entries = Object.entries(input);
-  if (entries.length === 0) fail('providers', 'must define at least one provider');
+  if (entries.length === 0)
+    fail('providers', 'must define at least one provider');
 
   return frozenRecord(
     entries.map(([rawId, rawProvider]) => {
@@ -160,10 +160,7 @@ function parseProviders(value: unknown): Readonly<Record<string, RoutingProvider
         `providers.${id}.kind`,
       ) as ProviderKind;
       if (kind !== 'openai-compatible') {
-        fail(
-          `providers.${id}.kind`,
-          'must currently be openai-compatible',
-        );
+        fail(`providers.${id}.kind`, 'must currently be openai-compatible');
       }
       return [id, Object.freeze({ id, kind })] as const;
     }),
@@ -188,10 +185,7 @@ function parseModels(value: unknown): Readonly<Record<string, RoutingModel>> {
         id,
         Object.freeze({
           id,
-          providerId: identifier(
-            model.provider,
-            `models.${id}.provider`,
-          ),
+          providerId: identifier(model.provider, `models.${id}.provider`),
           upstreamModel: nonEmptyString(
             model.upstreamModel,
             `models.${id}.upstreamModel`,
@@ -240,10 +234,7 @@ function parseRoutes(value: unknown): Readonly<Record<string, RoutingRoute>> {
   );
 }
 
-function parseProfileRoute(
-  value: unknown,
-  path: string,
-): RoutingProfileRoute {
+function parseProfileRoute(value: unknown, path: string): RoutingProfileRoute {
   const input = record(value, path);
   allowedKeys(input, ['route', 'priority'], path);
   return Object.freeze({
@@ -260,10 +251,13 @@ function parseProfileRoute(
   });
 }
 
-function parseProfiles(value: unknown): Readonly<Record<string, RoutingProfile>> {
+function parseProfiles(
+  value: unknown,
+): Readonly<Record<string, RoutingProfile>> {
   const input = record(value, 'profiles');
   const entries = Object.entries(input);
-  if (entries.length === 0) fail('profiles', 'must define at least one profile');
+  if (entries.length === 0)
+    fail('profiles', 'must define at least one profile');
 
   return frozenRecord(
     entries.map(([rawId, rawProfile]) => {
@@ -288,7 +282,10 @@ function parseProfiles(value: unknown): Readonly<Record<string, RoutingProfile>>
         seen.add(route.routeId);
       }
 
-      return [id, Object.freeze({ id, routes: Object.freeze(routes) })] as const;
+      return [
+        id,
+        Object.freeze({ id, routes: Object.freeze(routes) }),
+      ] as const;
     }),
   );
 }

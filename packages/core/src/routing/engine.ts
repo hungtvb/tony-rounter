@@ -96,7 +96,8 @@ function compareAccepted(
 ): number {
   const leftScore = left.score;
   const rightScore = right.score;
-  if (!leftScore || !rightScore) return left.routeId.localeCompare(right.routeId);
+  if (!leftScore || !rightScore)
+    return left.routeId.localeCompare(right.routeId);
 
   if (leftScore.profilePriority !== rightScore.profilePriority) {
     return rightScore.profilePriority - leftScore.profilePriority;

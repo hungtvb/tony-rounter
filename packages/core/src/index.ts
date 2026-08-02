@@ -7,14 +7,9 @@ export type {
   ModelCapabilities,
   RequiredCapabilities,
 } from './capabilities.js';
-export {
-  InMemorySessionAffinityStore,
-} from './routing/affinity.js';
+export { InMemorySessionAffinityStore } from './routing/affinity.js';
 export type { SessionAffinityStore } from './routing/affinity.js';
-export {
-  parseRoutingConfig,
-  RoutingConfigError,
-} from './routing/config.js';
+export { parseRoutingConfig, RoutingConfigError } from './routing/config.js';
 export {
   RoutingEngine,
   RoutingSelectionError,

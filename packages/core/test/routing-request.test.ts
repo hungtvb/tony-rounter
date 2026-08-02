@@ -48,7 +48,9 @@ describe('deriveChatRequestCapabilities', () => {
       deriveChatRequestCapabilities({
         messages: [
           {
-            content: [{ type: 'input_image', image_url: 'https://example.test' }],
+            content: [
+              { type: 'input_image', image_url: 'https://example.test' },
+            ],
           },
         ],
         response_format: { type: 'json_object' },

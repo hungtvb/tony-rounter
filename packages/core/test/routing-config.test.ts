@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  parseRoutingConfig,
-  RoutingConfigError,
-} from '../src/index.js';
+import { parseRoutingConfig, RoutingConfigError } from '../src/index.js';
 
 const VALID_CONFIG = `
 version: 1
@@ -71,7 +68,9 @@ describe('parseRoutingConfig', () => {
 
   it('rejects duplicate YAML keys', () => {
     expect(() =>
-      parseRoutingConfig(VALID_CONFIG.replace('version: 1', 'version: 1\nversion: 1')),
+      parseRoutingConfig(
+        VALID_CONFIG.replace('version: 1', 'version: 1\nversion: 1'),
+      ),
     ).toThrow(RoutingConfigError);
   });
 
@@ -122,7 +121,9 @@ describe('parseRoutingConfig', () => {
     ).toThrow(/unknown provider missing/);
 
     expect(() =>
-      parseRoutingConfig(VALID_CONFIG.replace('model: capable', 'model: missing')),
+      parseRoutingConfig(
+        VALID_CONFIG.replace('model: capable', 'model: missing'),
+      ),
     ).toThrow(/unknown model missing/);
 
     expect(() =>
@@ -133,7 +134,10 @@ describe('parseRoutingConfig', () => {
 
     expect(() =>
       parseRoutingConfig(
-        VALID_CONFIG.replace('defaultProfile: coding', 'defaultProfile: missing'),
+        VALID_CONFIG.replace(
+          'defaultProfile: coding',
+          'defaultProfile: missing',
+        ),
       ),
     ).toThrow(/unknown profile missing/);
   });
