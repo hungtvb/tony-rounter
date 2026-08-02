@@ -5,7 +5,12 @@ import { createGracefulShutdown, installSignalHandlers } from './shutdown.js';
 
 async function main(): Promise<void> {
   const config = await loadGatewayConfig();
-  const logger = createJsonLogger({ sensitiveValues: [config.token] });
+  const logger = createJsonLogger({
+    sensitiveValues: [
+      config.token,
+      ...(config.upstream?.apiKey ? [config.upstream.apiKey] : []),
+    ],
+  });
   const app = buildGateway({ config, logger });
   const shutdown = createGracefulShutdown(app, config.shutdownGraceMs, logger);
   const uninstallSignals = installSignalHandlers(shutdown, logger);
@@ -20,6 +25,7 @@ async function main(): Promise<void> {
           ? address.port
           : config.port,
       tokenSource: config.tokenSource,
+      upstreamConfigured: config.upstream !== undefined,
       ...(config.tokenSource === 'environment'
         ? {}
         : { tokenFile: config.tokenFile }),
