@@ -63,6 +63,14 @@ function byteChunk(value: unknown): Uint8Array {
   return value;
 }
 
+function redactSensitiveMessage(
+  message: string | undefined,
+  sensitiveValue: string | undefined,
+): string | undefined {
+  if (!message || !sensitiveValue) return message;
+  return message.split(sensitiveValue).join('[REDACTED]');
+}
+
 function createAbortScope(
   parentSignal: AbortSignal,
   timeoutMs: number,
@@ -216,6 +224,7 @@ function parseJson(text: string, message: string): unknown {
 async function upstreamFailure(
   response: Response,
   scope: AbortScope,
+  apiKey?: string,
 ): Promise<GatewayHttpError> {
   let parsed: unknown;
   try {
@@ -229,7 +238,10 @@ async function upstreamFailure(
     if (error instanceof GatewayHttpError) throw error;
   }
 
-  const upstreamMessage = upstreamErrorMessage(parsed);
+  const upstreamMessage = redactSensitiveMessage(
+    upstreamErrorMessage(parsed),
+    apiKey,
+  );
   const upstreamRequestId = safeUpstreamRequestId(response);
   const headers = {
     ...(upstreamRequestId
@@ -436,9 +448,12 @@ export class OpenAICompatibleClient implements OpenAICompatibleProvider {
       const response = await fetch(endpoint(this.config.baseUrl, 'models'), {
         method: 'GET',
         headers: this.headers(),
+        redirect: 'error',
         signal: scope.signal,
       });
-      if (!response.ok) throw await upstreamFailure(response, scope);
+      if (!response.ok) {
+        throw await upstreamFailure(response, scope, this.config.apiKey);
+      }
       const text = await readBoundedText(
         response,
         MAX_JSON_RESPONSE_BYTES,
@@ -484,10 +499,13 @@ export class OpenAICompatibleClient implements OpenAICompatibleProvider {
             'content-type': 'application/json',
           },
           body: JSON.stringify(request),
+          redirect: 'error',
           signal: scope.signal,
         },
       );
-      if (!response.ok) throw await upstreamFailure(response, scope);
+      if (!response.ok) {
+        throw await upstreamFailure(response, scope, this.config.apiKey);
+      }
 
       if (request.stream === true) {
         const body = await prepareStreamingBody(response, context, scope);
