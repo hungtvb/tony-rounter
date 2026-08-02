@@ -96,8 +96,9 @@ function compareAccepted(
 ): number {
   const leftScore = left.score;
   const rightScore = right.score;
-  if (!leftScore || !rightScore)
+  if (!leftScore || !rightScore) {
     return left.routeId.localeCompare(right.routeId);
+  }
 
   if (leftScore.profilePriority !== rightScore.profilePriority) {
     return rightScore.profilePriority - leftScore.profilePriority;
@@ -217,10 +218,12 @@ export class RoutingEngine {
       input.affinityRouteId ??
       (input.sessionId ? this.affinityStore?.get(input.sessionId) : undefined);
     const decision = selectRoute(this.config, {
-      profileId: input.profileId,
       requiredCapabilities: input.requiredCapabilities,
-      routeStates: input.routeStates,
-      affinityRouteId,
+      ...(input.profileId !== undefined ? { profileId: input.profileId } : {}),
+      ...(input.routeStates !== undefined
+        ? { routeStates: input.routeStates }
+        : {}),
+      ...(affinityRouteId !== undefined ? { affinityRouteId } : {}),
     });
 
     if (input.sessionId && decision.selected) {
