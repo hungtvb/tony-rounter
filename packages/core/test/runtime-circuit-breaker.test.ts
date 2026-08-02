@@ -34,6 +34,29 @@ describe('CircuitBreakerRegistry', () => {
     expect(denied.snapshot.state).toBe('open');
   });
 
+  it('shares failure counts across concurrent closed permits', () => {
+    const registry = new CircuitBreakerRegistry({
+      failureThreshold: 2,
+      cooldownMs: 100,
+    });
+
+    const first = registry.acquire(KEY, 0);
+    const second = registry.acquire(KEY, 0);
+    if (!first.allowed || !second.allowed) {
+      throw new Error('expected concurrent permits');
+    }
+
+    expect(registry.recordFailure(first.permit, 'count', 1)).toMatchObject({
+      state: 'closed',
+      consecutiveFailures: 1,
+    });
+    expect(registry.recordFailure(second.permit, 'count', 2)).toMatchObject({
+      state: 'open',
+      consecutiveFailures: 2,
+      retryAt: 102,
+    });
+  });
+
   it('transitions to half-open after cooldown and closes on success', () => {
     const registry = new CircuitBreakerRegistry({
       failureThreshold: 1,
@@ -122,6 +145,25 @@ describe('CircuitBreakerRegistry', () => {
         .allowed,
     ).toBe(true);
     expect(registry.acquire(KEY, 1).allowed).toBe(false);
+  });
+
+  it('invalidates outstanding permits when a circuit is reset', () => {
+    const registry = new CircuitBreakerRegistry({
+      failureThreshold: 1,
+      cooldownMs: 100,
+    });
+    const acquired = registry.acquire(KEY, 0);
+    if (!acquired.allowed) throw new Error('expected permit');
+
+    registry.reset(KEY);
+
+    expect(() => registry.recordSuccess(acquired.permit)).toThrow(
+      /invalid or already settled/,
+    );
+    expect(registry.snapshot(KEY)).toMatchObject({
+      state: 'closed',
+      consecutiveFailures: 0,
+    });
   });
 
   it('rejects settling the same permit twice', () => {
