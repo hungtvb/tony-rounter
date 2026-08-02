@@ -17,7 +17,8 @@ import {
 } from './openai/client.js';
 import { parseChatCompletionRequest } from './openai/protocol.js';
 import { createRequestAbortContext } from './request-abort.js';
-import { installUiRoutes } from './ui.js';
+import { GatewayTelemetry } from './telemetry.js';
+import { installUiRoutes, type UiProviderMode } from './ui.js';
 
 export interface GatewayModel {
   readonly id: string;
@@ -36,6 +37,15 @@ function requestPath(request: FastifyRequest): string {
   return request.url.split('?', 1)[0] ?? '/';
 }
 
+function providerMode(
+  provider: OpenAICompatibleProvider | undefined,
+  models: readonly GatewayModel[],
+): UiProviderMode {
+  if (provider) return 'openai-compatible';
+  if (models.length > 0) return 'static-registry';
+  return 'unconfigured';
+}
+
 export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   const { config } = options;
   const sensitiveValues = [
@@ -49,6 +59,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     (config.upstream
       ? new OpenAICompatibleClient(config.upstream, logger)
       : undefined);
+  const telemetry = new GatewayTelemetry();
 
   const app = Fastify({
     logger: false,
@@ -58,10 +69,16 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   });
 
   app.addHook('onRequest', (request) => {
+    const path = requestPath(request);
+    telemetry.start({
+      requestId: request.id,
+      method: request.method,
+      path,
+    });
     logger.info('request_started', {
       requestId: request.id,
       method: request.method,
-      path: requestPath(request),
+      path,
     });
     return Promise.resolve();
   });
@@ -77,10 +94,15 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   });
 
   app.addHook('onResponse', (request, reply) => {
+    const path = requestPath(request);
+    telemetry.complete({
+      requestId: request.id,
+      statusCode: reply.statusCode,
+    });
     logger.info('request_completed', {
       requestId: request.id,
       method: request.method,
-      path: requestPath(request),
+      path,
       statusCode: reply.statusCode,
     });
     return Promise.resolve();
@@ -115,7 +137,20 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     ),
   );
 
-  installUiRoutes(app);
+  installUiRoutes(app, {
+    telemetry,
+    runtime: {
+      version: config.version,
+      host: config.host,
+      port: config.port,
+      tokenSource: config.tokenSource,
+      provider: {
+        mode: providerMode(provider, models),
+        ...(config.upstream ? { baseUrl: config.upstream.baseUrl } : {}),
+        credentialConfigured: Boolean(config.upstream?.apiKey),
+      },
+    },
+  });
 
   app.get('/health', () => ({
     status: 'ok',
