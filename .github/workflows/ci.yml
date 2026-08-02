@@ -35,22 +35,30 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Apply verified source and test hygiene
+      - name: Apply verified Phase 3 fixes
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('packages/core/test/runtime-fallback.test.ts')
-          text = path.read_text()
+          circuit = Path('packages/core/src/runtime/circuit-breaker.ts')
+          circuit_text = circuit.read_text()
+          old_permit = '    const permit = Object.freeze(new CircuitPermit(key, circuit.state, token));'
+          new_permit = '    const permit = new CircuitPermit(key, circuit.state, token);'
+          if old_permit not in circuit_text:
+              raise SystemExit('expected frozen permit was not found')
+          circuit.write_text(circuit_text.replace(old_permit, new_permit))
+
+          test = Path('packages/core/test/runtime-fallback.test.ts')
+          test_text = test.read_text()
           directive = (
               '/* eslint-disable @typescript-eslint/require-await -- '
               'provider mocks intentionally implement the asynchronous operation contract */\n\n'
           )
-          if not text.startswith('/* eslint-disable @typescript-eslint/require-await'):
-              text = directive + text
+          if not test_text.startswith('/* eslint-disable @typescript-eslint/require-await'):
+              test_text = directive + test_text
 
-          old = '      if (signal.aborted) return Promise.reject(signal.reason);'
-          new = '''      if (signal.aborted) {
+          old_sleep = '      if (signal.aborted) return Promise.reject(signal.reason);'
+          new_sleep = '''      if (signal.aborted) {
             const reason = signal.reason as unknown;
             return Promise.reject(
               reason instanceof Error
@@ -58,11 +66,18 @@ jobs:
                 : new Error('Fake retry sleep was aborted', { cause: reason }),
             );
           }'''
-          if old not in text:
+          if old_sleep not in test_text:
               raise SystemExit('expected fake sleep rejection was not found')
-          path.write_text(text.replace(old, new))
+          test_text = test_text.replace(old_sleep, new_sleep)
+
+          old_listener = "          signal.addEventListener('abort', resolve, { once: true });"
+          new_listener = "          signal.addEventListener('abort', () => resolve(), { once: true });"
+          if old_listener not in test_text:
+              raise SystemExit('expected abort listener was not found')
+          test.write_text(test_text.replace(old_listener, new_listener))
           PY
           pnpm exec prettier --write \
+            packages/core/src/runtime/circuit-breaker.ts \
             packages/core/src/runtime/fallback.ts \
             packages/core/test/runtime-fallback.test.ts
           git checkout origin/main -- .github/workflows/ci.yml
@@ -75,6 +90,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
+            packages/core/src/runtime/circuit-breaker.ts \
             packages/core/src/runtime/fallback.ts \
             packages/core/test/runtime-fallback.test.ts \
             .github/workflows/ci.yml
