@@ -10,7 +10,7 @@ import {
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const LOCAL_UPSTREAM_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const API_KEY_ENV_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/;
-const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 60_000;
 
 export interface RoutedProviderConfig {
@@ -19,9 +19,15 @@ export interface RoutedProviderConfig {
   readonly timeoutMs: number;
 }
 
+export interface RoutedAccountConfig extends RoutedProviderConfig {
+  readonly providerId: string;
+  readonly apiKey?: string;
+}
+
 export interface GatewayRouterConfig {
   readonly registry: RoutingConfig;
   readonly providers: Readonly<Record<string, RoutedProviderConfig>>;
+  readonly accounts?: Readonly<Record<string, RoutedAccountConfig>>;
   readonly fallbackPolicy: FallbackPolicy;
   readonly circuitBreaker: CircuitBreakerConfig;
 }
@@ -61,6 +67,13 @@ function allowedKeys(
   if (unknown.length > 0) {
     fail(`${path} contains unknown field(s): ${unknown.sort().join(', ')}`);
   }
+}
+
+function identifier(value: unknown, path: string): string {
+  if (typeof value !== 'string' || !ID_PATTERN.test(value)) {
+    return fail(`${path} must be a valid identifier`);
+  }
+  return value;
 }
 
 function boundedInteger(
@@ -129,10 +142,11 @@ function apiKeyFromEnvironment(
 ): string | undefined {
   if (!environmentName) return undefined;
   const value = env[environmentName]?.trim();
-  if (!value)
+  if (!value) {
     return fail(
       `${path} references missing environment variable ${environmentName}`,
     );
+  }
   if (value.length > 2048 || /\s/.test(value)) {
     return fail(
       `${environmentName} must contain 1 to 2048 non-whitespace characters`,
@@ -149,38 +163,101 @@ function frozenRecord<T>(
   return Object.freeze(output);
 }
 
-function parseProviderBindings(
-  source: string,
+function ensureExactRegistry(
+  label: string,
+  itemLabel: string,
+  configured: UnknownRecord,
+  expectedIds: readonly string[],
+): void {
+  for (const id of expectedIds) {
+    if (!Object.prototype.hasOwnProperty.call(configured, id)) {
+      fail(`${label} is missing routing ${itemLabel} ${id}`);
+    }
+  }
+  for (const id of Object.keys(configured)) {
+    if (!expectedIds.includes(id)) {
+      fail(`${label}.${id} is not declared in the routing registry`);
+    }
+  }
+}
+
+function parseProviderDefaults(
+  value: unknown,
+  routing: RoutingConfig,
+): Readonly<Record<string, RoutedProviderConfig>> {
+  const providers = record(value, 'root.providers');
+  ensureExactRegistry(
+    'root.providers',
+    'provider',
+    providers,
+    Object.keys(routing.providers),
+  );
+
+  return frozenRecord(
+    Object.entries(providers).map(([providerId, rawProvider]) => {
+      identifier(providerId, `root.providers.${providerId}`);
+      const provider = record(rawProvider, `root.providers.${providerId}`);
+      allowedKeys(
+        provider,
+        ['baseUrl', 'timeoutMs'],
+        `root.providers.${providerId}`,
+      );
+      return [
+        providerId,
+        Object.freeze({
+          baseUrl: normalizeBaseUrl(
+            provider.baseUrl,
+            `root.providers.${providerId}.baseUrl`,
+          ),
+          timeoutMs: boundedInteger(
+            provider.timeoutMs,
+            `root.providers.${providerId}.timeoutMs`,
+            DEFAULT_UPSTREAM_TIMEOUT_MS,
+            10,
+            10 * 60_000,
+          ),
+        }),
+      ] as const;
+    }),
+  );
+}
+
+function parseVersionOneBindings(
+  root: UnknownRecord,
   routing: RoutingConfig,
   env: NodeJS.ProcessEnv,
-): Readonly<Record<string, RoutedProviderConfig>> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(source);
-  } catch {
-    return fail('Provider binding file must contain valid JSON');
-  }
-
-  const root = record(parsed, 'root');
+): {
+  readonly providers: Readonly<Record<string, RoutedProviderConfig>>;
+  readonly accounts: Readonly<Record<string, RoutedAccountConfig>>;
+} {
   allowedKeys(root, ['version', 'providers'], 'root');
-  if (root.version !== 1) fail('root.version must equal 1');
+  const rawProviders = record(root.providers, 'root.providers');
+  ensureExactRegistry(
+    'root.providers',
+    'provider',
+    rawProviders,
+    Object.keys(routing.providers),
+  );
 
-  const providers = record(root.providers, 'root.providers');
-  const entries = Object.entries(providers).map(([providerId, rawProvider]) => {
-    if (!PROVIDER_ID_PATTERN.test(providerId)) {
-      fail(`root.providers.${providerId} is not a valid provider ID`);
-    }
-    if (!(providerId in routing.providers)) {
-      fail(
-        `root.providers.${providerId} is not declared in the routing registry`,
-      );
-    }
-
+  const providers: Array<readonly [string, RoutedProviderConfig]> = [];
+  const accounts: Array<readonly [string, RoutedAccountConfig]> = [];
+  for (const [providerId, rawProvider] of Object.entries(rawProviders)) {
     const provider = record(rawProvider, `root.providers.${providerId}`);
     allowedKeys(
       provider,
       ['baseUrl', 'apiKeyEnv', 'timeoutMs'],
       `root.providers.${providerId}`,
+    );
+    const baseUrl = normalizeBaseUrl(
+      provider.baseUrl,
+      `root.providers.${providerId}.baseUrl`,
+    );
+    const timeoutMs = boundedInteger(
+      provider.timeoutMs,
+      `root.providers.${providerId}.timeoutMs`,
+      DEFAULT_UPSTREAM_TIMEOUT_MS,
+      10,
+      10 * 60_000,
     );
     const apiKeyEnv = apiKeyEnvironmentName(
       provider.apiKeyEnv,
@@ -191,31 +268,128 @@ function parseProviderBindings(
       apiKeyEnv,
       `root.providers.${providerId}.apiKeyEnv`,
     );
-    return [
+    providers.push([
       providerId,
       Object.freeze({
-        baseUrl: normalizeBaseUrl(
-          provider.baseUrl,
-          `root.providers.${providerId}.baseUrl`,
-        ),
+        baseUrl,
+        timeoutMs,
         ...(apiKey !== undefined ? { apiKey } : {}),
-        timeoutMs: boundedInteger(
-          provider.timeoutMs,
-          `root.providers.${providerId}.timeoutMs`,
-          DEFAULT_UPSTREAM_TIMEOUT_MS,
-          10,
-          10 * 60_000,
-        ),
       }),
-    ] as const;
-  });
-
-  for (const providerId of Object.keys(routing.providers)) {
-    if (!Object.prototype.hasOwnProperty.call(providers, providerId)) {
-      fail(`Provider binding file is missing routing provider ${providerId}`);
-    }
+    ]);
+    accounts.push([
+      providerId,
+      Object.freeze({
+        providerId,
+        baseUrl,
+        timeoutMs,
+        ...(apiKey !== undefined ? { apiKey } : {}),
+      }),
+    ]);
   }
-  return frozenRecord(entries);
+  return {
+    providers: frozenRecord(providers),
+    accounts: frozenRecord(accounts),
+  };
+}
+
+function parseVersionTwoBindings(
+  root: UnknownRecord,
+  routing: RoutingConfig,
+  env: NodeJS.ProcessEnv,
+): {
+  readonly providers: Readonly<Record<string, RoutedProviderConfig>>;
+  readonly accounts: Readonly<Record<string, RoutedAccountConfig>>;
+} {
+  allowedKeys(root, ['version', 'providers', 'accounts'], 'root');
+  const providers = parseProviderDefaults(root.providers, routing);
+  const rawAccounts = record(root.accounts, 'root.accounts');
+  ensureExactRegistry(
+    'root.accounts',
+    'account',
+    rawAccounts,
+    Object.keys(routing.accounts),
+  );
+
+  const accounts = frozenRecord(
+    Object.entries(rawAccounts).map(([accountId, rawAccount]) => {
+      identifier(accountId, `root.accounts.${accountId}`);
+      const account = record(rawAccount, `root.accounts.${accountId}`);
+      allowedKeys(
+        account,
+        ['provider', 'baseUrl', 'apiKeyEnv', 'timeoutMs'],
+        `root.accounts.${accountId}`,
+      );
+      const providerId = identifier(
+        account.provider,
+        `root.accounts.${accountId}.provider`,
+      );
+      const routingAccount = routing.accounts[accountId];
+      if (!routingAccount || routingAccount.providerId !== providerId) {
+        fail(
+          `root.accounts.${accountId}.provider must equal routing provider ${routingAccount?.providerId ?? 'unknown'}`,
+        );
+      }
+      const provider = providers[providerId];
+      if (!provider) {
+        fail(`root.accounts.${accountId} references missing provider ${providerId}`);
+      }
+      const apiKeyEnv = apiKeyEnvironmentName(
+        account.apiKeyEnv,
+        `root.accounts.${accountId}.apiKeyEnv`,
+      );
+      const apiKey = apiKeyFromEnvironment(
+        env,
+        apiKeyEnv,
+        `root.accounts.${accountId}.apiKeyEnv`,
+      );
+      return [
+        accountId,
+        Object.freeze({
+          providerId,
+          baseUrl:
+            account.baseUrl === undefined
+              ? provider.baseUrl
+              : normalizeBaseUrl(
+                  account.baseUrl,
+                  `root.accounts.${accountId}.baseUrl`,
+                ),
+          timeoutMs: boundedInteger(
+            account.timeoutMs,
+            `root.accounts.${accountId}.timeoutMs`,
+            provider.timeoutMs,
+            10,
+            10 * 60_000,
+          ),
+          ...(apiKey !== undefined ? { apiKey } : {}),
+        }),
+      ] as const;
+    }),
+  );
+  return { providers, accounts };
+}
+
+function parseBindings(
+  source: string,
+  routing: RoutingConfig,
+  env: NodeJS.ProcessEnv,
+): {
+  readonly providers: Readonly<Record<string, RoutedProviderConfig>>;
+  readonly accounts: Readonly<Record<string, RoutedAccountConfig>>;
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    return fail('Provider binding file must contain valid JSON');
+  }
+
+  const root = record(parsed, 'root');
+  if (root.version !== routing.version) {
+    fail(`root.version must equal routing configuration version ${routing.version}`);
+  }
+  return routing.version === 1
+    ? parseVersionOneBindings(root, routing, env)
+    : parseVersionTwoBindings(root, routing, env);
 }
 
 async function readBoundedFile(path: string, label: string): Promise<string> {
@@ -256,16 +430,17 @@ export async function loadGatewayRouterConfig(
     );
   }
 
-  const [routingSource, providerSource] = await Promise.all([
+  const [routingSource, bindingSource] = await Promise.all([
     readBoundedFile(routingPath, 'routing configuration'),
     readBoundedFile(providersPath, 'provider binding configuration'),
   ]);
   const registry = parseRoutingConfig(routingSource);
-  const providers = parseProviderBindings(providerSource, registry, env);
+  const bindings = parseBindings(bindingSource, registry, env);
 
   return Object.freeze({
     registry,
-    providers,
+    providers: bindings.providers,
+    accounts: bindings.accounts,
     fallbackPolicy: Object.freeze({
       maxAttemptsPerRoute: 2,
       maxTotalAttempts: 4,
@@ -285,8 +460,9 @@ export function routerSensitiveValues(
   config: GatewayRouterConfig | undefined,
 ): readonly string[] {
   return Object.freeze(
-    Object.values(config?.providers ?? {})
-      .map((provider) => provider.apiKey)
-      .filter((value): value is string => value !== undefined),
+    [
+      ...Object.values(config?.providers ?? {}).map((provider) => provider.apiKey),
+      ...Object.values(config?.accounts ?? {}).map((account) => account.apiKey),
+    ].filter((value): value is string => value !== undefined),
   );
 }
