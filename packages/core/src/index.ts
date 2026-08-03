@@ -7,6 +7,43 @@ export type {
   ModelCapabilities,
   RequiredCapabilities,
 } from './capabilities.js';
+export {
+  CircuitBreakerRegistry,
+  CircuitPermit,
+} from './runtime/circuit-breaker.js';
+export type {
+  CircuitAcquireResult,
+  CircuitAllowed,
+  CircuitBreakerConfig,
+  CircuitDenied,
+  CircuitKey,
+  CircuitSnapshot,
+  CircuitState,
+} from './runtime/circuit-breaker.js';
+export {
+  executeRoutedRequest,
+  RoutedExecutionError,
+} from './runtime/fallback.js';
+export type {
+  ExecuteRoutedRequestInput,
+  ExecutionTraceEvent,
+  FallbackPolicy,
+  RoutedExecutionErrorCode,
+  RoutedExecutionResult,
+  RoutedOperation,
+  RoutedOperationContext,
+} from './runtime/fallback.js';
+export {
+  classifyProviderFailure,
+  ProviderExecutionError,
+  providerExecutionError,
+} from './runtime/failure.js';
+export type {
+  CircuitFailureImpact,
+  ProviderExecutionErrorOptions,
+  ProviderFailure,
+  ProviderFailureKind,
+} from './runtime/failure.js';
 export { InMemorySessionAffinityStore } from './routing/affinity.js';
 export type { SessionAffinityStore } from './routing/affinity.js';
 export { parseRoutingConfig, RoutingConfigError } from './routing/config.js';
