@@ -40,6 +40,9 @@ describe('parseRoutingConfig', () => {
       providers: {
         primary: { id: 'primary', kind: 'openai-compatible' },
       },
+      accounts: {
+        primary: { id: 'primary', providerId: 'primary' },
+      },
       models: {
         capable: {
           id: 'capable',
@@ -51,6 +54,7 @@ describe('parseRoutingConfig', () => {
         'primary-route': {
           id: 'primary-route',
           modelId: 'capable',
+          accountId: 'primary',
           enabled: true,
           priority: 10,
         },
@@ -103,8 +107,8 @@ describe('parseRoutingConfig', () => {
 
   it('rejects unsupported versions and provider kinds', () => {
     expect(() =>
-      parseRoutingConfig(VALID_CONFIG.replace('version: 1', 'version: 2')),
-    ).toThrow(/must equal 1/);
+      parseRoutingConfig(VALID_CONFIG.replace('version: 1', 'version: 3')),
+    ).toThrow(/must equal 1 or 2/);
 
     expect(() =>
       parseRoutingConfig(
