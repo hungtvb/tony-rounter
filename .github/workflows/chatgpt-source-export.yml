@@ -1,0 +1,77 @@
+name: ChatGPT Source Export
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/chatgpt-source-export.yml'
+
+permissions:
+  contents: read
+
+env:
+  TARGET_SHA: 8c8ed7a3e77414409fc08d82923edaa629d47163
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source with history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+
+      - name: Verify and package working copy
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git remote set-head origin main || true
+          git update-ref refs/remotes/origin/main "$TARGET_SHA"
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --local --unset-all credential.helper || true
+          git status --short | tee "$RUNNER_TEMP/status.txt"
+          test ! -s "$RUNNER_TEMP/status.txt"
+          git fsck --full
+          cd "$GITHUB_WORKSPACE"
+          out="$RUNNER_TEMP/tony-router-source"
+          mkdir -p "$out"
+          archive="$out/tony-rounter-main-${TARGET_SHA}.tar.gz"
+          tar -C source -czf "$archive" .
+          archive_name=$(basename "$archive")
+          (cd "$out" && sha256sum "$archive_name" > SHA256SUMS)
+          size=$(stat -c '%s' "$archive")
+          sha=$(awk '{print $1}' "$out/SHA256SUMS")
+          tracked=$(git -C source ls-files | wc -l | tr -d ' ')
+          commits=$(git -C source rev-list --count HEAD)
+          cat > "$out/job-report.json" <<JSON
+          {
+            "job": "tony-router-source-bootstrap",
+            "repository": "hungtvb/tony-rounter",
+            "branch": "main",
+            "source_sha": "$TARGET_SHA",
+            "archive": "$archive_name",
+            "size_bytes": $size,
+            "sha256": "$sha",
+            "tracked_files": $tracked,
+            "commit_count": $commits,
+            "git_status": "clean",
+            "git_fsck": "passed"
+          }
+          JSON
+          echo "directory=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tony-rounter-main-with-git-8c8ed7a3
+          path: ${{ steps.package.outputs.directory }}
+          if-no-files-found: error
+          retention-days: 1
