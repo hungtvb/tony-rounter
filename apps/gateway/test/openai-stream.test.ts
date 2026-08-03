@@ -43,10 +43,10 @@ describe('OpenAI-compatible streaming adapter', () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.body).toContain(
-      'data: {"id":"chunk-1","choices":[{"delta":{"content":"Hel"}}],"object":"chat.completion.chunk"}\n\n',
+      'data: {"id":"chunk-1","choices":[{"delta":{"content":"Hel"}}],"object":"chat.completion.chunk","model":"model-a"}\n\n',
     );
     expect(response.body).toContain(
-      'data: {"id":"chunk-1","choices":[{"delta":{"content":"lo"}}],"object":"chat.completion.chunk"}\n\n',
+      'data: {"id":"chunk-1","choices":[{"delta":{"content":"lo"}}],"object":"chat.completion.chunk","model":"model-a"}\n\n',
     );
     expect(response.body.endsWith('data: [DONE]\n\n')).toBe(true);
   });

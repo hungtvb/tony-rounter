@@ -119,7 +119,27 @@ class FakeProvider implements OpenAICompatibleProvider {
     context: ProviderRequestContext,
   ): Promise<ChatCompletionResult> {
     this.requests.push(request);
-    return this.handler(request, context);
+    const result = await this.handler(request, context);
+    if (!context.publicModel) return result;
+    if (!result.stream) {
+      return {
+        stream: false,
+        body: { ...result.body, model: context.publicModel },
+      };
+    }
+
+    const source = result.body;
+    const publicModel = context.publicModel;
+    return {
+      stream: true,
+      body: Readable.from(
+        (async function* () {
+          for await (const chunk of source) {
+            yield String(chunk).replaceAll('backup-upstream', publicModel);
+          }
+        })(),
+      ),
+    };
   }
 }
 
@@ -222,6 +242,7 @@ describe('multi-provider routed gateway', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ model: 'tony-auto' });
     expect(primary.requests[0]?.model).toBe('primary-upstream');
     expect(backup.requests[0]?.model).toBe('backup-upstream');
     expect(response.headers['x-tony-router-route']).toBe('backup-route');
@@ -343,7 +364,7 @@ describe('multi-provider routed gateway', () => {
     const backup = new FakeProvider(async () => ({
       stream: true,
       body: Readable.from([
-        'data: {"id":"chunk","choices":[{"delta":{"content":"ok"}}]}\n\n',
+        'data: {"id":"chunk","model":"backup-upstream","choices":[{"delta":{"content":"ok"}}]}\n\n',
         'data: [DONE]\n\n',
       ]),
     }));
@@ -364,6 +385,8 @@ describe('multi-provider routed gateway', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('"content":"ok"');
+    expect(response.body).toContain('"model":"tony-auto"');
+    expect(response.body).not.toContain('backup-upstream');
     expect(primary.requests).toHaveLength(1);
     expect(backup.requests).toHaveLength(1);
   });

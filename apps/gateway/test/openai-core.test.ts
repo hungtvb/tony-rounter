@@ -78,6 +78,7 @@ describe('OpenAI-compatible JSON adapter', () => {
       });
       return {
         id: 'chatcmpl-1',
+        model: 'private-upstream-model',
         choices: [
           {
             index: 0,

@@ -7,19 +7,16 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout Phase 4 branch
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: feat/multi-provider-gateway-clean
-          fetch-depth: 0
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -35,33 +32,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Apply public model hardening
-        shell: bash
-        run: |
-          set -euo pipefail
-          python .github/phase4-public-model.py
-          python -c 'from pathlib import Path; p=Path("apps/gateway/src/openai/client.ts"); s=p.read_text(); old="""canonicalEvents(\n          decoder.push(byteChunk(chunk.value)),\n          state,\n        )"""; new="""canonicalEvents(\n          decoder.push(byteChunk(chunk.value)),\n          state,\n          responseModel,\n        )"""; assert s.count(old) == 1; p.write_text(s.replace(old, new, 1))'
-          python .github/phase4-public-model-tests.py
-
-      - name: Restore standard CI and remove temporary files
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f .github/phase4-public-model.py
-          rm -f .github/phase4-public-model-tests.py
-          rm -f .github/workflows/chatgpt-phase4-public-model.yml
-          git checkout origin/main -- .github/workflows/ci.yml
-          pnpm format
-
-      - name: Verify repository
+      - name: Verify
         run: pnpm verify
-
-      - name: Commit verified hardening
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix(gateway): keep routed upstream model IDs private"
-          git push origin HEAD:feat/multi-provider-gateway-clean

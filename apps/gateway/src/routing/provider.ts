@@ -26,6 +26,12 @@ import type { GatewayRouterConfig } from './config.js';
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,200}$/;
 
+function compareIdentifier(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export interface RoutedChatRequestContext extends ProviderRequestContext {
   readonly replaySafe: boolean;
   readonly sessionId?: string;
@@ -180,7 +186,7 @@ export class RoutedOpenAIProvider {
     return Object.freeze({
       object: 'list',
       data: Object.values(this.#config.registry.profiles)
-        .sort((left, right) => left.id.localeCompare(right.id))
+        .sort((left, right) => compareIdentifier(left.id, right.id))
         .map((profile) =>
           Object.freeze({
             id: profile.id,
@@ -234,7 +240,11 @@ export class RoutedOpenAIProvider {
           try {
             return await provider.createChatCompletion(
               Object.freeze({ ...request, model: route.upstreamModel }),
-              { requestId: context.requestId, signal },
+              {
+                requestId: context.requestId,
+                signal,
+                publicModel: request.model,
+              },
             );
           } catch (error) {
             throw enrichedProviderError(error);

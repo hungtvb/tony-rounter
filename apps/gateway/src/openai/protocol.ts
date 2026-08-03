@@ -154,7 +154,7 @@ export function normalizeChatCompletionResponse(
     ...value,
     id: value.id,
     object: typeof value.object === 'string' ? value.object : 'chat.completion',
-    model: typeof value.model === 'string' ? value.model : requestedModel,
+    model: requestedModel,
     choices: value.choices,
     ...(usage ? { usage } : {}),
   };
@@ -162,6 +162,7 @@ export function normalizeChatCompletionResponse(
 
 export function normalizeChatCompletionChunk(
   value: unknown,
+  requestedModel?: string,
 ): Readonly<Record<string, unknown>> {
   if (!isRecord(value)) {
     throw new GatewayHttpError(
@@ -189,6 +190,7 @@ export function normalizeChatCompletionChunk(
     ...value,
     object:
       typeof value.object === 'string' ? value.object : 'chat.completion.chunk',
+    ...(requestedModel !== undefined ? { model: requestedModel } : {}),
     choices: value.choices,
   };
 }
