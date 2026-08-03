@@ -1,3 +1,4 @@
+import { parseRoutingConfig } from '@tony-router/core';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -5,13 +6,110 @@ import {
   buildGateway,
   createNullLogger,
   type GatewayConfig,
+  type GatewayRouterConfig,
 } from '../src/index.js';
 
 const TOKEN = 'ui-test-token-'.padEnd(48, 'x');
 const UPSTREAM_API_KEY = 'upstream-secret-key';
 const apps: FastifyInstance[] = [];
 
+const ROUTED_SECRET = 'routed-provider-secret';
+const ROUTING_YAML = `version: 2
+defaultProfile: tony-auto
+providers:
+  openai:
+    kind: openai-compatible
+accounts:
+  personal:
+    provider: openai
+  work:
+    provider: openai
+models:
+  gpt:
+    provider: openai
+    upstreamModel: gpt-5
+    capabilities:
+      tools: true
+      parallelToolCalls: true
+      vision: false
+      structuredOutput: true
+      contextTokens: 128000
+routes:
+  personal-route:
+    model: gpt
+    account: personal
+    priority: 20
+  work-route:
+    model: gpt
+    account: work
+    priority: 10
+profiles:
+  tony-auto:
+    routes:
+      - route: personal-route
+      - route: work-route
+`;
+
+function routedConfig(): GatewayRouterConfig {
+  return {
+    registry: parseRoutingConfig(ROUTING_YAML),
+    providers: {
+      openai: {
+        baseUrl: 'https://api.openai.example/v1',
+        timeoutMs: 60_000,
+      },
+    },
+    accounts: {
+      personal: {
+        providerId: 'openai',
+        baseUrl: 'https://api.openai.example/v1',
+        apiKey: ROUTED_SECRET,
+        timeoutMs: 60_000,
+      },
+      work: {
+        providerId: 'openai',
+        baseUrl: 'https://work.openai.example/v1',
+        timeoutMs: 90_000,
+      },
+    },
+    fallbackPolicy: {
+      maxAttemptsPerRoute: 1,
+      maxTotalAttempts: 2,
+      baseDelayMs: 0,
+      maxDelayMs: 0,
+      totalDeadlineMs: 1000,
+    },
+    circuitBreaker: {
+      failureThreshold: 2,
+      cooldownMs: 60_000,
+      halfOpenMaxAttempts: 1,
+    },
+  };
+}
+
 interface DashboardTestResponse {
+  readonly routing?: {
+    readonly version: 1 | 2;
+    readonly defaultProfileId: string;
+    readonly providers: readonly {
+      readonly id: string;
+      readonly accountCount: number;
+      readonly modelCount: number;
+      readonly routeCount: number;
+    }[];
+    readonly accounts: readonly {
+      readonly id: string;
+      readonly providerId: string;
+      readonly credentialConfigured: boolean;
+      readonly modelCount: number;
+      readonly routeCount: number;
+    }[];
+    readonly profiles: readonly {
+      readonly id: string;
+      readonly accountCount: number;
+      readonly routeCount: number;
+    }[];
+  };
   readonly telemetry: {
     readonly requestsSinceStart: number;
     readonly successfulRequestsSinceStart: number;
@@ -84,6 +182,9 @@ describe('local runtime dashboard', () => {
     );
     expect(response.body).toContain('Tony Router');
     expect(response.body).toContain('Request Traces');
+    expect(response.body).toContain('Providers &amp; Accounts');
+    expect(response.body).toContain('Environment-only setup');
+    expect(response.body).toContain('routingConfigOutput');
     expect(response.body).toContain('/ui/styles.css');
     expect(response.body).toContain('/ui/app.js');
     expect(response.body).not.toContain(TOKEN);
@@ -102,6 +203,8 @@ describe('local runtime dashboard', () => {
     expect(styles.statusCode).toBe(200);
     expect(styles.headers['content-type']).toContain('text/css');
     expect(styles.body).toContain('.dashboard-grid');
+    expect(styles.body).toContain('.providers-layout');
+    expect(styles.body).toContain('.provider-account-row');
     expect(styles.body).not.toContain(TOKEN);
 
     expect(script.statusCode).toBe(200);
@@ -112,6 +215,9 @@ describe('local runtime dashboard', () => {
     expect(script.body).toContain("fetch('/ui/api/dashboard'");
     expect(script.body).toContain("fetch('/v1/models'");
     expect(script.body).toContain("fetch('/v1/chat/completions'");
+    expect(script.body).toContain('function renderProviders()');
+    expect(script.body).toContain('function generateSetupConfiguration()');
+    expect(script.body).toContain('data-setup-provider');
     expect(script.body).not.toContain(TOKEN);
   });
 
@@ -177,6 +283,64 @@ describe('local runtime dashboard', () => {
     });
     expect(response.body).not.toContain(TOKEN);
     expect(response.body).not.toContain(UPSTREAM_API_KEY);
+  });
+
+  it('returns a safe routed provider inventory with sibling accounts', async () => {
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        router: routedConfig(),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ui/api/dashboard',
+      headers: authorization(),
+    });
+    const body = response.json<DashboardTestResponse>();
+
+    expect(response.statusCode).toBe(200);
+    expect(body.routing).toEqual({
+      version: 2,
+      defaultProfileId: 'tony-auto',
+      providers: [
+        expect.objectContaining({
+          id: 'openai',
+          accountCount: 2,
+          modelCount: 1,
+          routeCount: 2,
+        }),
+      ],
+      accounts: [
+        expect.objectContaining({
+          id: 'personal',
+          providerId: 'openai',
+          credentialConfigured: true,
+          modelCount: 1,
+          routeCount: 1,
+        }),
+        expect.objectContaining({
+          id: 'work',
+          providerId: 'openai',
+          credentialConfigured: false,
+          modelCount: 1,
+          routeCount: 1,
+        }),
+      ],
+      profiles: [
+        expect.objectContaining({
+          id: 'tony-auto',
+          accountCount: 2,
+          routeCount: 2,
+        }),
+      ],
+    });
+    expect(response.body).toContain('https://work.openai.example/v1');
+    expect(response.body).not.toContain(ROUTED_SECRET);
+    expect(response.body).not.toContain('authorization');
+    expect(response.body).not.toContain('apiKey');
   });
 
   it('reports real bounded request metadata while excluding dashboard polling', async () => {

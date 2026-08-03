@@ -4,6 +4,7 @@ export const UI_JS_PART_3 = String.raw`      ? telemetry.inFlightRequests + ' cu
       ? telemetry.successRate.toFixed(1) + '%'
       : '—';
     renderProvider();
+    renderProviders();
     renderConnection();
     updateUptime();
   }

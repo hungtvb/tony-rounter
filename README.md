@@ -18,8 +18,12 @@ Implemented and verified:
 - hard capability extraction for tools, parallel tool calls, vision, structured output, and context size
 - deterministic profile/route scoring with lexical tie-breaking
 - bounded session affinity and machine-readable rejection traces
+- multi-provider routed runtime with bounded retry, safe fallback, and per-account circuit isolation
+- first-class provider accounts with routing/binding configuration version 2 and version 1 compatibility
+- local control-plane dashboard with protected provider/account inventory, models, traces, and chat playground
+- environment-only provider setup assistant that generates starter files without collecting raw API keys
 
-The routing engine currently lives in `@tony-router/core`. Wiring multiple configured upstream providers into the HTTP gateway and safe runtime fallback are the next phases.
+The routing engine lives in `@tony-router/core`; the Fastify gateway wires profiles to provider accounts and keeps public model IDs stable across JSON and SSE responses.
 
 ## Run the gateway
 
@@ -34,7 +38,7 @@ pnpm --filter @tony-router/gateway start
 
 The gateway listens on `127.0.0.1:8787` by default. Without `TONY_ROUTER_TOKEN`, a 256-bit token is created at `~/.tony-router/token`.
 
-Configure one OpenAI-compatible upstream:
+For the simplest legacy mode, configure one OpenAI-compatible upstream:
 
 ```bash
 export TONY_ROUTER_UPSTREAM_BASE_URL=https://api.openai.com/v1
@@ -59,7 +63,7 @@ curl http://127.0.0.1:8787/v1/chat/completions \
   }'
 ```
 
-See `.env.example` for all gateway settings.
+See `.env.example` for all gateway settings. For multiple accounts, use `examples/router.yaml`, `docs/provider-accounts.md`, and the **Providers** page at `http://127.0.0.1:8787/ui#providers`.
 
 ## Routing core
 
@@ -122,7 +126,12 @@ Routing Engine
         v
 Provider Adapters
   - OpenAI-compatible (implemented)
-  - Anthropic / Gemini / others (planned)
+        |
+        v
+Provider Accounts
+  - independent credentials and endpoints
+  - account-isolated circuit/fallback state
+  - Anthropic / Gemini adapters (planned)
 ```
 
 ## Security boundaries

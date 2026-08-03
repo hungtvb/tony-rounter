@@ -1,5 +1,7 @@
 # Roadmap
 
+> **Implementation note (2026-08-03):** The repository has already delivered multi-provider routed runtime, first-class provider accounts, and a local web control plane ahead of the original phase numbering below. Treat current code, tests, and active GitHub issues as authoritative; this document remains the long-range protocol/desktop roadmap.
+
 ## Delivery strategy
 
 Build the smallest verifiable routing core first. Each phase should end with executable tests and a working artifact rather than documentation-only completion.

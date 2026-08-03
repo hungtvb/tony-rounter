@@ -21,7 +21,11 @@ import type { GatewayRouterConfig } from './routing/config.js';
 import { routerSensitiveValues } from './routing/config.js';
 import { RoutedOpenAIProvider } from './routing/provider.js';
 import { GatewayTelemetry } from './telemetry.js';
-import { installUiRoutes, type UiProviderMode } from './ui.js';
+import {
+  buildUiRoutingInventory,
+  installUiRoutes,
+  type UiProviderMode,
+} from './ui.js';
 
 export interface GatewayModel {
   readonly id: string;
@@ -205,6 +209,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   const routedAccountCount = options.router
     ? Object.keys(options.router.registry.accounts).length
     : undefined;
+  const routingInventory = buildUiRoutingInventory(options.router);
   installUiRoutes(app, {
     telemetry,
     runtime: {
@@ -226,6 +231,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
           routerSensitiveValues(options.router).length,
         ),
       },
+      ...(routingInventory ? { routing: routingInventory } : {}),
     },
   });
 
