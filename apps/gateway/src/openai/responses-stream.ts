@@ -1,6 +1,6 @@
 import { GatewayHttpError } from '../errors.js';
 
-interface JsonRecord extends Readonly<Record<string, unknown>> {}
+type JsonRecord = Readonly<Record<string, unknown>>;
 
 export interface ResponsesTextStreamOptions {
   readonly model: string;
@@ -39,7 +39,10 @@ function parseJson(data: string): JsonRecord {
     return streamFailure('Upstream emitted a non-object streaming event');
   }
   if ('error' in parsed) {
-    return fail('upstream_stream_error', 'Upstream emitted an error during streaming');
+    return fail(
+      'upstream_stream_error',
+      'Upstream emitted an error during streaming',
+    );
   }
   return parsed;
 }
@@ -47,17 +50,23 @@ function parseJson(data: string): JsonRecord {
 function safeInteger(value: unknown, name: string): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    return streamFailure(`Upstream ${name} must be a non-negative safe integer`);
+    return streamFailure(
+      `Upstream ${name} must be a non-negative safe integer`,
+    );
   }
   return value;
 }
 
 function usage(value: unknown): JsonRecord | undefined {
   if (value === undefined || value === null) return undefined;
-  if (!isRecord(value)) return streamFailure('Upstream usage must be an object');
+  if (!isRecord(value))
+    return streamFailure('Upstream usage must be an object');
 
   const inputTokens = safeInteger(value.prompt_tokens, 'prompt_tokens');
-  const outputTokens = safeInteger(value.completion_tokens, 'completion_tokens');
+  const outputTokens = safeInteger(
+    value.completion_tokens,
+    'completion_tokens',
+  );
   const totalTokens = safeInteger(value.total_tokens, 'total_tokens');
   if (
     inputTokens === undefined &&
@@ -104,7 +113,8 @@ export class ResponsesTextStreamEncoder {
       throw new TypeError('model must be a non-empty string');
     }
     this.#options = options;
-    this.#nowSeconds = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
+    this.#nowSeconds =
+      options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
   }
 
   push(data: string): readonly string[] {
@@ -124,7 +134,9 @@ export class ResponsesTextStreamEncoder {
       return streamFailure('Upstream stream started without an output choice');
     }
     if (chunk.choices.length > 1) {
-      return unsupported('Text Responses streaming supports exactly one choice');
+      return unsupported(
+        'Text Responses streaming supports exactly one choice',
+      );
     }
 
     const events: string[] = [];
@@ -139,7 +151,9 @@ export class ResponsesTextStreamEncoder {
     const choice = chunk.choices[0];
     if (!choice) return events;
     if (choice.index !== undefined && choice.index !== 0) {
-      return unsupported('Text Responses streaming supports only choice index zero');
+      return unsupported(
+        'Text Responses streaming supports only choice index zero',
+      );
     }
     if (!isRecord(choice.delta)) {
       return streamFailure('Upstream streaming choice delta is invalid');
@@ -147,7 +161,9 @@ export class ResponsesTextStreamEncoder {
 
     const delta = choice.delta;
     if (delta.role !== undefined && delta.role !== 'assistant') {
-      return unsupported('Text Responses streaming supports only assistant output');
+      return unsupported(
+        'Text Responses streaming supports only assistant output',
+      );
     }
     if (
       delta.tool_calls !== undefined ||
@@ -177,7 +193,9 @@ export class ResponsesTextStreamEncoder {
     const finishReason = choice.finish_reason;
     if (finishReason !== undefined && finishReason !== null) {
       if (finishReason !== 'stop') {
-        return unsupported(`Unsupported streaming finish reason: ${String(finishReason)}`);
+        return unsupported(
+          `Unsupported streaming finish reason: ${String(finishReason)}`,
+        );
       }
       if (this.#finishSeen) {
         return streamFailure('Upstream emitted multiple finish reasons');
@@ -199,7 +217,8 @@ export class ResponsesTextStreamEncoder {
     const suffix = idSuffix(this.#upstreamId);
     this.#responseId = `resp_${suffix}`;
     this.#itemId = `msg_${suffix}`;
-    this.#createdAt = safeInteger(chunk.created, 'created') ?? this.#nowSeconds();
+    this.#createdAt =
+      safeInteger(chunk.created, 'created') ?? this.#nowSeconds();
 
     const response = this.#response('in_progress', []);
     const item = this.#message('in_progress', []);
@@ -269,7 +288,10 @@ export class ResponsesTextStreamEncoder {
     return wire(event);
   }
 
-  #message(status: 'in_progress' | 'completed', content: readonly JsonRecord[]): JsonRecord {
+  #message(
+    status: 'in_progress' | 'completed',
+    content: readonly JsonRecord[],
+  ): JsonRecord {
     return {
       id: this.#requiredItemId(),
       type: 'message',
@@ -279,7 +301,10 @@ export class ResponsesTextStreamEncoder {
     };
   }
 
-  #response(status: 'in_progress' | 'completed', output: readonly JsonRecord[]): JsonRecord {
+  #response(
+    status: 'in_progress' | 'completed',
+    output: readonly JsonRecord[],
+  ): JsonRecord {
     const completed = status === 'completed';
     return {
       id: this.#requiredResponseId(),
@@ -309,12 +334,14 @@ export class ResponsesTextStreamEncoder {
   }
 
   #requiredResponseId(): string {
-    if (!this.#responseId) return streamFailure('Response stream was not initialized');
+    if (!this.#responseId)
+      return streamFailure('Response stream was not initialized');
     return this.#responseId;
   }
 
   #requiredItemId(): string {
-    if (!this.#itemId) return streamFailure('Response stream was not initialized');
+    if (!this.#itemId)
+      return streamFailure('Response stream was not initialized');
     return this.#itemId;
   }
 

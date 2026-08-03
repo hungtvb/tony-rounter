@@ -48,11 +48,11 @@ describe('ResponsesTextStreamEncoder', () => {
       ...encoder.push(chatChunk({ role: 'assistant', content: 'Hel' })),
       ...encoder.push(chatChunk({ content: 'lo' })),
       ...encoder.push(
-        chatChunk(
-          {},
-          'stop',
-          { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
-        ),
+        chatChunk({}, 'stop', {
+          prompt_tokens: 2,
+          completion_tokens: 3,
+          total_tokens: 5,
+        }),
       ),
       ...encoder.push('[DONE]'),
     ];
@@ -163,9 +163,9 @@ describe('ResponsesTextStreamEncoder', () => {
 
   it('rejects unsupported and duplicate finish reasons', () => {
     const unsupported = new ResponsesTextStreamEncoder({ model: 'coding' });
-    expect(() => unsupported.push(chatChunk({ content: 'x' }, 'length'))).toThrowError(
-      /Unsupported streaming finish reason/,
-    );
+    expect(() =>
+      unsupported.push(chatChunk({ content: 'x' }, 'length')),
+    ).toThrowError(/Unsupported streaming finish reason/);
 
     const duplicate = new ResponsesTextStreamEncoder({ model: 'coding' });
     duplicate.push(chatChunk({ content: 'x' }, 'stop'));
@@ -181,14 +181,18 @@ describe('ResponsesTextStreamEncoder', () => {
 
     const missingFinish = new ResponsesTextStreamEncoder({ model: 'coding' });
     missingFinish.push(chatChunk({ content: 'partial' }));
-    expect(() => missingFinish.push('[DONE]')).toThrowError(/before a finish reason/);
+    expect(() => missingFinish.push('[DONE]')).toThrowError(
+      /before a finish reason/,
+    );
   });
 
   it('rejects data after completion and response IDs that change mid-stream', () => {
     const encoder = new ResponsesTextStreamEncoder({ model: 'coding' });
     encoder.push(chatChunk({ content: 'done' }, 'stop'));
     encoder.push('[DONE]');
-    expect(() => encoder.push('[DONE]')).toThrowError(/after the terminal event/);
+    expect(() => encoder.push('[DONE]')).toThrowError(
+      /after the terminal event/,
+    );
 
     const changed = new ResponsesTextStreamEncoder({ model: 'coding' });
     changed.push(chatChunk({ content: 'first' }));
@@ -196,7 +200,9 @@ describe('ResponsesTextStreamEncoder', () => {
       changed.push(
         JSON.stringify({
           id: 'chatcmpl_other',
-          choices: [{ index: 0, delta: { content: 'second' }, finish_reason: null }],
+          choices: [
+            { index: 0, delta: { content: 'second' }, finish_reason: null },
+          ],
         }),
       ),
     ).toThrowError(/ID changed/);
