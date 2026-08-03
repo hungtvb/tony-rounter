@@ -49,6 +49,48 @@ describe('Responses API protocol translation', () => {
     ]);
   });
 
+  it('translates Responses function tools and named tool choice', () => {
+    const translated = responsesToChatCompletion(
+      parseResponsesRequest({
+        model: 'coding',
+        input: 'Write a file.',
+        tools: [
+          {
+            type: 'function',
+            name: 'write_file',
+            description: 'Write content to disk',
+            parameters: {
+              type: 'object',
+              properties: { path: { type: 'string' } },
+              required: ['path'],
+            },
+            strict: true,
+          },
+        ],
+        tool_choice: { type: 'function', name: 'write_file' },
+      }),
+    );
+
+    expect(translated).toMatchObject({
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'write_file',
+            description: 'Write content to disk',
+            parameters: {
+              type: 'object',
+              properties: { path: { type: 'string' } },
+              required: ['path'],
+            },
+            strict: true,
+          },
+        },
+      ],
+      tool_choice: { type: 'function', function: { name: 'write_file' } },
+    });
+  });
+
   it('rejects streaming until the Responses SSE contract is implemented', () => {
     expect(() =>
       parseResponsesRequest({ model: 'coding', input: 'hello', stream: true }),
@@ -72,7 +114,12 @@ describe('Responses API protocol translation', () => {
           input: [
             {
               role: 'user',
-              content: [{ type: 'input_image', image_url: 'https://example.test/a.png' }],
+              content: [
+                {
+                  type: 'input_image',
+                  image_url: 'https://example.test/a.png',
+                },
+              ],
             },
           ],
         }),
@@ -97,14 +144,21 @@ describe('Responses API protocol translation', () => {
                   {
                     id: 'call_1',
                     type: 'function',
-                    function: { name: 'write_file', arguments: '{"path":"a"}' },
+                    function: {
+                      name: 'write_file',
+                      arguments: '{"path":"a"}',
+                    },
                   },
                 ],
               },
               finish_reason: 'tool_calls',
             },
           ],
-          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+          },
         },
         'coding',
       ),
