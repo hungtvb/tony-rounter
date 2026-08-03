@@ -1,5 +1,6 @@
 name: Apply Phase 4 gateway wiring
 
+# One-shot installer: verifies the feature branch and removes itself after success.
 on:
   push:
     branches:
