@@ -1,0 +1,48 @@
+name: Repair Responses Stream Foundation
+
+on:
+  pull_request:
+    paths:
+      - 'apps/gateway/src/openai/responses-stream.ts'
+      - 'apps/gateway/src/openai/responses-stream.test.ts'
+      - '.github/workflows/repair-responses-stream-foundation.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - name: Repair and format
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/gateway/src/openai/responses-stream.ts')
+          source = path.read_text().replace(
+              'interface JsonRecord extends Readonly<Record<string, unknown>> {}',
+              'type JsonRecord = Readonly<Record<string, unknown>>;',
+          )
+          path.write_text(source)
+          PY
+          pnpm exec prettier --write apps/gateway/src/openai/responses-stream.ts apps/gateway/src/openai/responses-stream.test.ts
+      - name: Commit repair
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/gateway/src/openai/responses-stream.ts apps/gateway/src/openai/responses-stream.test.ts
+          git commit -m "style(responses): format text stream foundation"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
