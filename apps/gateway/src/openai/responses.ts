@@ -47,11 +47,53 @@ function responseInputMessages(input: ResponsesRequest['input']): readonly JsonR
     if (item.type !== undefined && item.type !== 'message') {
       return unsupported('this phase supports only message input items');
     }
-    if (item.role !== 'user' && item.role !== 'assistant' && item.role !== 'system' && item.role !== 'developer') {
+    if (
+      item.role !== 'user' &&
+      item.role !== 'assistant' &&
+      item.role !== 'system' &&
+      item.role !== 'developer'
+    ) {
       return invalid('message role must be user, assistant, system, or developer');
     }
     return { role: item.role, content: inputText(item.content) };
   });
+}
+
+function translateTools(value: unknown): readonly JsonRecord[] {
+  if (!Array.isArray(value)) return invalid('tools must be an array when provided');
+  return value.map((tool) => {
+    if (!isRecord(tool)) return invalid('tool entries must be JSON objects');
+    if (tool.type !== 'function') {
+      return unsupported('this phase supports only function tools');
+    }
+    if (typeof tool.name !== 'string' || tool.name.trim().length === 0) {
+      return invalid('function tool name must be a non-empty string');
+    }
+    if (tool.description !== undefined && typeof tool.description !== 'string') {
+      return invalid('function tool description must be a string when provided');
+    }
+    if (tool.parameters !== undefined && !isRecord(tool.parameters)) {
+      return invalid('function tool parameters must be a JSON object when provided');
+    }
+    return {
+      type: 'function',
+      function: {
+        name: tool.name,
+        ...(tool.description !== undefined ? { description: tool.description } : {}),
+        parameters: tool.parameters ?? { type: 'object', properties: {} },
+        ...(typeof tool.strict === 'boolean' ? { strict: tool.strict } : {}),
+      },
+    };
+  });
+}
+
+function translateToolChoice(value: unknown): unknown {
+  if (value === 'none' || value === 'auto' || value === 'required') return value;
+  if (!isRecord(value)) return invalid('tool_choice is invalid');
+  if (value.type !== 'function' || typeof value.name !== 'string') {
+    return unsupported('this phase supports only named function tool_choice');
+  }
+  return { type: 'function', function: { name: value.name } };
 }
 
 export function parseResponsesRequest(value: unknown): ResponsesRequest {
@@ -69,7 +111,11 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
   if (value.stream !== undefined && value.stream !== false) {
     return invalid('stream must be a boolean when provided');
   }
-  if (value.previous_response_id !== undefined || value.background !== undefined || value.store !== undefined) {
+  if (
+    value.previous_response_id !== undefined ||
+    value.background !== undefined ||
+    value.store !== undefined
+  ) {
     return unsupported('stored, background, and chained responses are not implemented');
   }
   return value as ResponsesRequest;
@@ -77,7 +123,9 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
 
 export function responsesToChatCompletion(request: ResponsesRequest): ChatCompletionRequest {
   const messages: JsonRecord[] = [];
-  if (request.instructions) messages.push({ role: 'developer', content: request.instructions });
+  if (request.instructions) {
+    messages.push({ role: 'developer', content: request.instructions });
+  }
   messages.push(...responseInputMessages(request.input));
 
   const translated: Record<string, unknown> = {
@@ -85,22 +133,40 @@ export function responsesToChatCompletion(request: ResponsesRequest): ChatComple
     messages,
     stream: false,
   };
-  if (request.max_output_tokens !== undefined) translated.max_tokens = request.max_output_tokens;
+  if (request.max_output_tokens !== undefined) {
+    translated.max_tokens = request.max_output_tokens;
+  }
   if (request.temperature !== undefined) translated.temperature = request.temperature;
   if (request.top_p !== undefined) translated.top_p = request.top_p;
-  if (request.tools !== undefined) translated.tools = request.tools;
-  if (request.tool_choice !== undefined) translated.tool_choice = request.tool_choice;
-  if (request.parallel_tool_calls !== undefined) translated.parallel_tool_calls = request.parallel_tool_calls;
+  if (request.tools !== undefined) translated.tools = translateTools(request.tools);
+  if (request.tool_choice !== undefined) {
+    translated.tool_choice = translateToolChoice(request.tool_choice);
+  }
+  if (request.parallel_tool_calls !== undefined) {
+    if (typeof request.parallel_tool_calls !== 'boolean') {
+      return invalid('parallel_tool_calls must be a boolean when provided');
+    }
+    translated.parallel_tool_calls = request.parallel_tool_calls;
+  }
 
   return translated as ChatCompletionRequest;
 }
 
 function usage(value: unknown): JsonRecord | undefined {
   if (!isRecord(value)) return undefined;
-  const inputTokens = typeof value.prompt_tokens === 'number' ? value.prompt_tokens : 0;
-  const outputTokens = typeof value.completion_tokens === 'number' ? value.completion_tokens : 0;
-  const totalTokens = typeof value.total_tokens === 'number' ? value.total_tokens : inputTokens + outputTokens;
-  return { input_tokens: inputTokens, output_tokens: outputTokens, total_tokens: totalTokens };
+  const inputTokens =
+    typeof value.prompt_tokens === 'number' ? value.prompt_tokens : 0;
+  const outputTokens =
+    typeof value.completion_tokens === 'number' ? value.completion_tokens : 0;
+  const totalTokens =
+    typeof value.total_tokens === 'number'
+      ? value.total_tokens
+      : inputTokens + outputTokens;
+  return {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    total_tokens: totalTokens,
+  };
 }
 
 export function chatCompletionToResponse(
@@ -110,7 +176,11 @@ export function chatCompletionToResponse(
   const choices = Array.isArray(value.choices) ? value.choices : [];
   const first = choices[0];
   if (!isRecord(first) || !isRecord(first.message)) {
-    throw new GatewayHttpError(502, 'upstream_invalid_response', 'Upstream returned no response message');
+    throw new GatewayHttpError(
+      502,
+      'upstream_invalid_response',
+      'Upstream returned no response message',
+    );
   }
 
   const message = first.message;
@@ -121,7 +191,9 @@ export function chatCompletionToResponse(
       type: 'message',
       status: 'completed',
       role: 'assistant',
-      content: [{ type: 'output_text', text: message.content, annotations: [] }],
+      content: [
+        { type: 'output_text', text: message.content, annotations: [] },
+      ],
     });
   }
 
@@ -129,9 +201,24 @@ export function chatCompletionToResponse(
     for (const entry of message.tool_calls) {
       if (!isRecord(entry) || !isRecord(entry.function)) continue;
       const callId = typeof entry.id === 'string' ? entry.id : undefined;
-      const name = typeof entry.function.name === 'string' ? entry.function.name : undefined;
-      const argumentsValue = typeof entry.function.arguments === 'string' ? entry.function.arguments : '{}';
-      if (callId && name) output.push({ type: 'function_call', id: callId, call_id: callId, name, arguments: argumentsValue, status: 'completed' });
+      const name =
+        typeof entry.function.name === 'string'
+          ? entry.function.name
+          : undefined;
+      const argumentsValue =
+        typeof entry.function.arguments === 'string'
+          ? entry.function.arguments
+          : '{}';
+      if (callId && name) {
+        output.push({
+          type: 'function_call',
+          id: callId,
+          call_id: callId,
+          name,
+          arguments: argumentsValue,
+          status: 'completed',
+        });
+      }
     }
   }
 
@@ -139,7 +226,10 @@ export function chatCompletionToResponse(
   return {
     id: typeof value.id === 'string' ? value.id : 'resp_tony_router',
     object: 'response',
-    created_at: typeof value.created === 'number' ? value.created : Math.floor(Date.now() / 1000),
+    created_at:
+      typeof value.created === 'number'
+        ? value.created
+        : Math.floor(Date.now() / 1000),
     status: 'completed',
     error: null,
     incomplete_details: null,
