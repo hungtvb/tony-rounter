@@ -23,7 +23,13 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      - name: Print Prettier patch
-        run: |
-          pnpm exec prettier --write apps/gateway/src/app.ts apps/gateway/src/openai/responses.ts apps/gateway/test/responses.test.ts
-          git diff -- apps/gateway/src/app.ts apps/gateway/src/openai/responses.ts apps/gateway/test/responses.test.ts
+      - name: Format Responses files
+        run: pnpm exec prettier --write apps/gateway/src/app.ts apps/gateway/src/openai/responses.ts apps/gateway/test/responses.test.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formatted-responses-files
+          path: |
+            apps/gateway/src/app.ts
+            apps/gateway/src/openai/responses.ts
+            apps/gateway/test/responses.test.ts
+          retention-days: 1
