@@ -6,7 +6,10 @@ import { UI_HTML } from './ui-assets/html.js';
 import { UI_CSS } from './ui-assets/styles.js';
 
 export type UiProviderMode =
-  'openai-compatible' | 'static-registry' | 'unconfigured';
+  | 'routed'
+  | 'openai-compatible'
+  | 'static-registry'
+  | 'unconfigured';
 
 export interface UiRuntimeInfo {
   readonly version: string;
@@ -16,6 +19,7 @@ export interface UiRuntimeInfo {
   readonly provider: {
     readonly mode: UiProviderMode;
     readonly baseUrl?: string;
+    readonly providerCount?: number;
     readonly credentialConfigured: boolean;
   };
 }
