@@ -19,7 +19,7 @@ export const UI_JS_PART_2 = String.raw`    const minutes = Math.floor((seconds %
   function providerLabel(runtime) {
     const provider = runtime && runtime.provider;
     if (!provider) return 'Not configured';
-    if (provider.mode === 'routed') return (provider.providerCount || 0) + ' routed providers';
+    if (provider.mode === 'routed') return (provider.providerCount || 0) + ' providers · ' + (provider.accountCount || 0) + ' accounts';
     if (provider.mode === 'static-registry') return 'Static model registry';
     if (provider.baseUrl) {
       try { return new URL(provider.baseUrl).hostname; } catch (_) { return 'OpenAI-compatible'; }
@@ -62,10 +62,15 @@ export const UI_JS_PART_2 = String.raw`    const minutes = Math.floor((seconds %
     const configured = Boolean(provider && provider.mode !== 'unconfigured');
     const label = providerLabel(state.dashboard);
     const providerCount = provider && provider.providerCount ? provider.providerCount : (configured ? 1 : 0);
+    const accountCount = provider && provider.accountCount ? provider.accountCount : providerCount;
 
-    elements.providerMetric.textContent = connected ? providerCount + ' / ' + providerCount : 'Locked';
+    elements.providerMetric.textContent = connected
+      ? (provider && provider.mode === 'routed' ? accountCount + ' accounts' : providerCount + ' / ' + providerCount)
+      : 'Locked';
     elements.providerDetail.textContent = connected
-      ? (configured ? 'Provider configured' : 'No upstream configured')
+      ? (configured
+          ? (provider && provider.mode === 'routed' ? providerCount + ' providers · independent account routing' : 'Provider configured')
+          : 'No upstream configured')
       : 'Connect with your local token';
     elements.providerName.textContent = connected ? label : 'Not connected';
     elements.providerBaseUrl.textContent = connected
