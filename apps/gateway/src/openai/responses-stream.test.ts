@@ -245,6 +245,7 @@ describe('ResponsesStreamEncoder', () => {
       sequence_number: 5,
       item_id: 'fc_call_1_0',
       output_index: 0,
+      name: 'write_file',
       arguments: '{"path":"a.txt","content":"ok"}',
     });
     expect(events[7]).toMatchObject({

@@ -49,6 +49,301 @@ describe('Responses API protocol translation', () => {
     ]);
   });
 
+  it('replays assistant output, function calls, and tool results as chat history', () => {
+    const translated = responsesToChatCompletion(
+      parseResponsesRequest({
+        model: 'coding',
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Write the file.' }],
+          },
+          {
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [
+              {
+                type: 'output_text',
+                text: 'I will write it now.',
+                annotations: [],
+              },
+            ],
+          },
+          {
+            type: 'function_call',
+            id: 'fc_1',
+            call_id: 'call_1',
+            name: 'write_file',
+            arguments: '{"path":"a.txt","content":"hello"}',
+            status: 'completed',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: '{"ok":true}',
+          },
+        ],
+      }),
+    );
+
+    expect(translated.messages).toEqual([
+      { role: 'user', content: 'Write the file.' },
+      {
+        role: 'assistant',
+        content: 'I will write it now.',
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'write_file',
+              arguments: '{"path":"a.txt","content":"hello"}',
+            },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: '{"ok":true}' },
+    ]);
+  });
+
+  it('preserves parallel call and output ordering', () => {
+    const translated = responsesToChatCompletion(
+      parseResponsesRequest({
+        model: 'coding',
+        input: [
+          {
+            type: 'function_call',
+            call_id: 'call_read',
+            name: 'read_file',
+            arguments: '{"path":"a.txt"}',
+            status: 'completed',
+          },
+          {
+            type: 'function_call',
+            call_id: 'call_stat',
+            name: 'stat_file',
+            arguments: '{"path":"a.txt"}',
+            status: 'completed',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_stat',
+            output: [{ type: 'input_text', text: '{"size":5}' }],
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_read',
+            output: 'hello',
+          },
+        ],
+      }),
+    );
+
+    expect(translated.messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_read',
+            type: 'function',
+            function: {
+              name: 'read_file',
+              arguments: '{"path":"a.txt"}',
+            },
+          },
+          {
+            id: 'call_stat',
+            type: 'function',
+            function: {
+              name: 'stat_file',
+              arguments: '{"path":"a.txt"}',
+            },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_stat', content: '{"size":5}' },
+      { role: 'tool', tool_call_id: 'call_read', content: 'hello' },
+    ]);
+  });
+
+  it('supports multiple completed function-call turns in one manual history', () => {
+    const translated = responsesToChatCompletion(
+      parseResponsesRequest({
+        model: 'coding',
+        input: [
+          {
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'read_file',
+            arguments: '{"path":"a.txt"}',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: 'hello',
+          },
+          {
+            type: 'function_call',
+            call_id: 'call_2',
+            name: 'write_file',
+            arguments: '{"path":"b.txt"}',
+          },
+          {
+            type: 'function_call',
+            call_id: 'call_3',
+            name: 'stat_file',
+            arguments: '{"path":"b.txt"}',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_2',
+            output: 'written',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_3',
+            output: '{"size":0}',
+          },
+        ],
+      }),
+    );
+
+    expect(translated.messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'read_file',
+              arguments: '{"path":"a.txt"}',
+            },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: 'hello' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_2',
+            type: 'function',
+            function: {
+              name: 'write_file',
+              arguments: '{"path":"b.txt"}',
+            },
+          },
+          {
+            id: 'call_3',
+            type: 'function',
+            function: {
+              name: 'stat_file',
+              arguments: '{"path":"b.txt"}',
+            },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_2', content: 'written' },
+      { role: 'tool', tool_call_id: 'call_3', content: '{"size":0}' },
+    ]);
+  });
+
+  it('rejects malformed or incomplete manual function history', () => {
+    const invalidInputs = [
+      [
+        {
+          type: 'function_call_output',
+          call_id: 'call_missing',
+          output: 'orphan',
+        },
+      ],
+      [
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'write_file',
+          arguments: '{}',
+        },
+      ],
+      [
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'write_file',
+          arguments: '{}',
+        },
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'write_file',
+          arguments: '{}',
+        },
+        { type: 'function_call_output', call_id: 'call_1', output: 'ok' },
+      ],
+      [
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'write_file',
+          arguments: '{}',
+        },
+        { type: 'function_call_output', call_id: 'call_1', output: 'ok' },
+        { type: 'function_call_output', call_id: 'call_1', output: 'again' },
+      ],
+      [
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'write_file',
+          arguments: '{}',
+        },
+        { type: 'message', role: 'user', content: 'continue' },
+      ],
+      [
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'write_file',
+          arguments: '{}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: [
+            { type: 'input_image', image_url: 'data:image/png;base64,x' },
+          ],
+        },
+      ],
+      [
+        {
+          type: 'function_call',
+          call_id: 'invalid call id',
+          name: 'write_file',
+          arguments: '{}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'invalid call id',
+          output: 'ok',
+        },
+      ],
+    ];
+
+    for (const input of invalidInputs) {
+      expect(() =>
+        responsesToChatCompletion(
+          parseResponsesRequest({ model: 'coding', input }),
+        ),
+      ).toThrowError(GatewayHttpError);
+    }
+  });
+
   it('translates Responses function tools and named tool choice', () => {
     const translated = responsesToChatCompletion(
       parseResponsesRequest({
@@ -89,6 +384,22 @@ describe('Responses API protocol translation', () => {
       ],
       tool_choice: { type: 'function', function: { name: 'write_file' } },
     });
+  });
+
+  it('keeps server-side previous_response_id chaining unsupported', () => {
+    expect(() =>
+      parseResponsesRequest({
+        model: 'coding',
+        previous_response_id: 'resp_previous',
+        input: [
+          {
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: 'done',
+          },
+        ],
+      }),
+    ).toThrowError(/chained responses are not implemented/);
   });
 
   it('allows explicitly disabled storage and background execution', () => {

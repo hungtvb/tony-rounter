@@ -43,6 +43,60 @@ describe('deriveChatRequestCapabilities', () => {
     });
   });
 
+  it('requires tool capabilities for replayed tool history without new tools', () => {
+    expect(
+      deriveChatRequestCapabilities({
+        messages: [
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_read',
+                type: 'function',
+                function: { name: 'read_file', arguments: '{}' },
+              },
+              {
+                id: 'call_stat',
+                type: 'function',
+                function: { name: 'stat_file', arguments: '{}' },
+              },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'call_read', content: 'hello' },
+          { role: 'tool', tool_call_id: 'call_stat', content: '{"size":5}' },
+        ],
+      }),
+    ).toMatchObject({
+      tools: true,
+      parallelToolCalls: true,
+    });
+  });
+
+  it('requires tools but not parallel calls for one replayed tool result', () => {
+    expect(
+      deriveChatRequestCapabilities({
+        messages: [
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_read',
+                type: 'function',
+                function: { name: 'read_file', arguments: '{}' },
+              },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'call_read', content: 'hello' },
+        ],
+      }),
+    ).toMatchObject({
+      tools: true,
+      parallelToolCalls: false,
+    });
+  });
+
   it('recognizes input_image and json_object compatibility forms', () => {
     expect(
       deriveChatRequestCapabilities({

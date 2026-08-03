@@ -32,6 +32,7 @@ export interface ResponsesRequest extends Readonly<Record<string, unknown>> {
 type JsonRecord = Readonly<Record<string, unknown>>;
 
 const FUNCTION_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const CALL_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -85,7 +86,10 @@ function validateOptionalNumber(
   }
 }
 
-function inputText(content: unknown): string {
+function inputText(
+  content: unknown,
+  role: 'user' | 'assistant' | 'system' | 'developer',
+): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) {
     return invalid('message content must be a string or an array');
@@ -99,8 +103,13 @@ function inputText(content: unknown): string {
     if (!isRecord(part)) {
       return invalid('input content items must be JSON objects');
     }
-    if (part.type !== 'input_text') {
-      return unsupported('this phase supports only input_text message content');
+    const supportedType =
+      part.type === 'input_text' ||
+      (role === 'assistant' && part.type === 'output_text');
+    if (!supportedType) {
+      return unsupported(
+        'this phase supports only input_text content and replayed assistant output_text content',
+      );
     }
     if (typeof part.text !== 'string') {
       return invalid('input_text content must contain a string text value');
@@ -108,6 +117,52 @@ function inputText(content: unknown): string {
     text.push(part.text);
   }
   return text.join('');
+}
+
+function toolOutputText(output: unknown): string {
+  if (typeof output === 'string') return output;
+  if (!Array.isArray(output)) {
+    return invalid('function_call_output output must be a string or an array');
+  }
+  if (output.length === 0) {
+    return invalid('function_call_output output array must not be empty');
+  }
+
+  const text: string[] = [];
+  for (const part of output) {
+    if (!isRecord(part)) {
+      return invalid('function_call_output content items must be JSON objects');
+    }
+    if (part.type !== 'input_text') {
+      return unsupported(
+        'this phase supports only input_text function_call_output content',
+      );
+    }
+    if (typeof part.text !== 'string') {
+      return invalid(
+        'function_call_output input_text content must contain a string text value',
+      );
+    }
+    text.push(part.text);
+  }
+  return text.join('');
+}
+
+function validateCompletedStatus(value: unknown, label: string): void {
+  if (value === undefined || value === 'completed') return;
+  if (value !== 'in_progress' && value !== 'incomplete') {
+    return invalid(`${label} status is invalid`);
+  }
+  invalid(`${label} must be completed before it can be replayed`);
+}
+
+function validateCallId(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !CALL_ID_PATTERN.test(value)) {
+    return invalid(
+      `${label} must contain 1 to 200 letters, numbers, underscores, or dashes`,
+    );
+  }
+  return value;
 }
 
 function responseInputMessages(
@@ -121,23 +176,132 @@ function responseInputMessages(
     return invalid('input array must contain at least one item');
   }
 
-  return input.map((item) => {
+  const messages: Record<string, unknown>[] = [];
+  const calls = new Map<string, { readonly resolved: boolean }>();
+  const pendingCallIds = new Set<string>();
+  let toolOutputsStarted = false;
+  let assistantToolMessage: Record<string, unknown> | undefined;
+  let assistantToolCalls: JsonRecord[] | undefined;
+
+  for (const item of input) {
     if (!isRecord(item)) return invalid('input items must be JSON objects');
-    if (item.type !== undefined && item.type !== 'message') {
-      return unsupported('this phase supports only message input items');
+
+    if (item.type === undefined || item.type === 'message') {
+      if (pendingCallIds.size > 0) {
+        return invalid(
+          'all preceding function calls need outputs before the next message',
+        );
+      }
+      if (
+        item.role !== 'user' &&
+        item.role !== 'assistant' &&
+        item.role !== 'system' &&
+        item.role !== 'developer'
+      ) {
+        return invalid(
+          'message role must be user, assistant, system, or developer',
+        );
+      }
+      validateCompletedStatus(item.status, 'message input item');
+      const message: Record<string, unknown> = {
+        role: item.role,
+        content: inputText(item.content, item.role),
+      };
+      messages.push(message);
+      assistantToolMessage = item.role === 'assistant' ? message : undefined;
+      assistantToolCalls = assistantToolMessage ? [] : undefined;
+      toolOutputsStarted = false;
+      continue;
     }
-    if (
-      item.role !== 'user' &&
-      item.role !== 'assistant' &&
-      item.role !== 'system' &&
-      item.role !== 'developer'
-    ) {
-      return invalid(
-        'message role must be user, assistant, system, or developer',
+
+    if (item.type === 'function_call') {
+      if (pendingCallIds.size === 0 && !assistantToolMessage) {
+        toolOutputsStarted = false;
+      }
+      if (toolOutputsStarted && pendingCallIds.size > 0) {
+        return invalid(
+          'function calls must be listed before outputs for the current assistant turn',
+        );
+      }
+      validateCompletedStatus(item.status, 'function_call input item');
+      if (
+        item.id !== undefined &&
+        (typeof item.id !== 'string' || item.id.length === 0)
+      ) {
+        return invalid(
+          'function_call id must be a non-empty string when provided',
+        );
+      }
+      const callId = validateCallId(item.call_id, 'function_call call_id');
+      if (calls.has(callId)) {
+        return invalid(`function_call call_id ${callId} is duplicated`);
+      }
+      const name = validateFunctionName(item.name, 'function_call name');
+      if (typeof item.arguments !== 'string') {
+        return invalid('function_call arguments must be a string');
+      }
+
+      if (!assistantToolMessage) {
+        assistantToolCalls = [];
+        assistantToolMessage = {
+          role: 'assistant',
+          content: null,
+          tool_calls: assistantToolCalls,
+        };
+        messages.push(assistantToolMessage);
+      }
+      assistantToolCalls ??= [];
+      assistantToolCalls.push({
+        id: callId,
+        type: 'function',
+        function: { name, arguments: item.arguments },
+      });
+      assistantToolMessage.tool_calls = assistantToolCalls;
+      calls.set(callId, { resolved: false });
+      pendingCallIds.add(callId);
+      continue;
+    }
+
+    if (item.type === 'function_call_output') {
+      validateCompletedStatus(item.status, 'function_call_output input item');
+      const callId = validateCallId(
+        item.call_id,
+        'function_call_output call_id',
       );
+      const call = calls.get(callId);
+      if (!call) {
+        return invalid(
+          `function_call_output ${callId} does not reference a preceding function_call`,
+        );
+      }
+      if (call.resolved) {
+        return invalid(`function_call_output ${callId} is duplicated`);
+      }
+      const content = toolOutputText(item.output);
+      messages.push({
+        role: 'tool',
+        tool_call_id: callId,
+        content,
+      });
+      calls.set(callId, { resolved: true });
+      pendingCallIds.delete(callId);
+      assistantToolMessage = undefined;
+      assistantToolCalls = undefined;
+      toolOutputsStarted = true;
+      continue;
     }
-    return { role: item.role, content: inputText(item.content) };
-  });
+
+    return unsupported(
+      'this phase supports only message, function_call, and function_call_output input items',
+    );
+  }
+
+  if (pendingCallIds.size > 0) {
+    return invalid(
+      'every function_call input item requires one function_call_output',
+    );
+  }
+  return messages;
 }
 
 function validateFunctionName(value: unknown, label: string): string {

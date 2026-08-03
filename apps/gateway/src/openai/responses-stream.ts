@@ -526,6 +526,7 @@ export class ResponsesStreamEncoder {
           this.#event('response.function_call_arguments.done', {
             item_id: output.itemId,
             output_index: output.outputIndex,
+            name: output.name,
             arguments: output.arguments,
           }),
           this.#event('response.output_item.done', {
