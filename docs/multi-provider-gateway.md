@@ -20,7 +20,7 @@ Provider bindings contain base URLs, timeout values, and optional `apiKeyEnv` re
 }
 ```
 
-In routed mode, OpenAI-compatible `model` values are routing profile IDs such as `tony-auto`. The selected route rewrites that public profile to its configured upstream model.
+In routed mode, OpenAI-compatible `model` values are routing profile IDs such as `tony-auto`. The selected route rewrites that public profile to its configured upstream model. JSON responses and SSE chunks are normalized back to the public profile ID so upstream model IDs remain internal.
 
 Ambiguous failures such as timeout, connection failure, or upstream 5xx are not replayed by default. Clients must explicitly send `x-tony-router-replay-safe: true` to authorize fallback after a failure that may have processed the request. Authentication, configuration, and rate-limit rejection can fall back before output without that header.
 
