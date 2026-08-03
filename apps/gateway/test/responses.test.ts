@@ -152,7 +152,11 @@ describe('POST /v1/responses', () => {
           type: 'message',
           role: 'assistant',
           content: [
-            { type: 'output_text', text: 'Hello from upstream.', annotations: [] },
+            {
+              type: 'output_text',
+              text: 'Hello from upstream.',
+              annotations: [],
+            },
           ],
         },
       ],

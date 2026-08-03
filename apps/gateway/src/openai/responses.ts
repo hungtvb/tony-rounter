@@ -24,11 +24,13 @@ function unsupported(message: string): never {
 
 function inputText(content: unknown): string {
   if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return invalid('message content must be a string or an array');
+  if (!Array.isArray(content))
+    return invalid('message content must be a string or an array');
 
   const text: string[] = [];
   for (const part of content) {
-    if (!isRecord(part)) return invalid('input content items must be JSON objects');
+    if (!isRecord(part))
+      return invalid('input content items must be JSON objects');
     if (part.type === 'input_text' && typeof part.text === 'string') {
       text.push(part.text);
       continue;
@@ -38,9 +40,12 @@ function inputText(content: unknown): string {
   return text.join('');
 }
 
-function responseInputMessages(input: ResponsesRequest['input']): readonly JsonRecord[] {
+function responseInputMessages(
+  input: ResponsesRequest['input'],
+): readonly JsonRecord[] {
   if (typeof input === 'string') return [{ role: 'user', content: input }];
-  if (!Array.isArray(input)) return invalid('input must be a string or an array');
+  if (!Array.isArray(input))
+    return invalid('input must be a string or an array');
 
   return input.map((item) => {
     if (!isRecord(item)) return invalid('input items must be JSON objects');
@@ -53,14 +58,17 @@ function responseInputMessages(input: ResponsesRequest['input']): readonly JsonR
       item.role !== 'system' &&
       item.role !== 'developer'
     ) {
-      return invalid('message role must be user, assistant, system, or developer');
+      return invalid(
+        'message role must be user, assistant, system, or developer',
+      );
     }
     return { role: item.role, content: inputText(item.content) };
   });
 }
 
 function translateTools(value: unknown): readonly JsonRecord[] {
-  if (!Array.isArray(value)) return invalid('tools must be an array when provided');
+  if (!Array.isArray(value))
+    return invalid('tools must be an array when provided');
   return value.map((tool) => {
     if (!isRecord(tool)) return invalid('tool entries must be JSON objects');
     if (tool.type !== 'function') {
@@ -69,17 +77,26 @@ function translateTools(value: unknown): readonly JsonRecord[] {
     if (typeof tool.name !== 'string' || tool.name.trim().length === 0) {
       return invalid('function tool name must be a non-empty string');
     }
-    if (tool.description !== undefined && typeof tool.description !== 'string') {
-      return invalid('function tool description must be a string when provided');
+    if (
+      tool.description !== undefined &&
+      typeof tool.description !== 'string'
+    ) {
+      return invalid(
+        'function tool description must be a string when provided',
+      );
     }
     if (tool.parameters !== undefined && !isRecord(tool.parameters)) {
-      return invalid('function tool parameters must be a JSON object when provided');
+      return invalid(
+        'function tool parameters must be a JSON object when provided',
+      );
     }
     return {
       type: 'function',
       function: {
         name: tool.name,
-        ...(tool.description !== undefined ? { description: tool.description } : {}),
+        ...(tool.description !== undefined
+          ? { description: tool.description }
+          : {}),
         parameters: tool.parameters ?? { type: 'object', properties: {} },
         ...(typeof tool.strict === 'boolean' ? { strict: tool.strict } : {}),
       },
@@ -88,7 +105,8 @@ function translateTools(value: unknown): readonly JsonRecord[] {
 }
 
 function translateToolChoice(value: unknown): unknown {
-  if (value === 'none' || value === 'auto' || value === 'required') return value;
+  if (value === 'none' || value === 'auto' || value === 'required')
+    return value;
   if (!isRecord(value)) return invalid('tool_choice is invalid');
   if (value.type !== 'function' || typeof value.name !== 'string') {
     return unsupported('this phase supports only named function tool_choice');
@@ -102,11 +120,16 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
     return invalid('model must be a non-empty string');
   }
   if (value.input === undefined) return invalid('input is required');
-  if (value.instructions !== undefined && typeof value.instructions !== 'string') {
+  if (
+    value.instructions !== undefined &&
+    typeof value.instructions !== 'string'
+  ) {
     return invalid('instructions must be a string when provided');
   }
   if (value.stream === true) {
-    return unsupported('streaming Responses API is not implemented in this phase');
+    return unsupported(
+      'streaming Responses API is not implemented in this phase',
+    );
   }
   if (value.stream !== undefined && value.stream !== false) {
     return invalid('stream must be a boolean when provided');
@@ -116,12 +139,16 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
     value.background !== undefined ||
     value.store !== undefined
   ) {
-    return unsupported('stored, background, and chained responses are not implemented');
+    return unsupported(
+      'stored, background, and chained responses are not implemented',
+    );
   }
   return value as ResponsesRequest;
 }
 
-export function responsesToChatCompletion(request: ResponsesRequest): ChatCompletionRequest {
+export function responsesToChatCompletion(
+  request: ResponsesRequest,
+): ChatCompletionRequest {
   const messages: JsonRecord[] = [];
   if (request.instructions) {
     messages.push({ role: 'developer', content: request.instructions });
@@ -136,9 +163,11 @@ export function responsesToChatCompletion(request: ResponsesRequest): ChatComple
   if (request.max_output_tokens !== undefined) {
     translated.max_tokens = request.max_output_tokens;
   }
-  if (request.temperature !== undefined) translated.temperature = request.temperature;
+  if (request.temperature !== undefined)
+    translated.temperature = request.temperature;
   if (request.top_p !== undefined) translated.top_p = request.top_p;
-  if (request.tools !== undefined) translated.tools = translateTools(request.tools);
+  if (request.tools !== undefined)
+    translated.tools = translateTools(request.tools);
   if (request.tool_choice !== undefined) {
     translated.tool_choice = translateToolChoice(request.tool_choice);
   }
@@ -187,7 +216,11 @@ export function chatCompletionToResponse(
   const output: JsonRecord[] = [];
   if (typeof message.content === 'string') {
     output.push({
-      id: `msg_${String(value.id).replace(/[^A-Za-z0-9_-]/g, '').slice(-48) || 'response'}`,
+      id: `msg_${
+        String(value.id)
+          .replace(/[^A-Za-z0-9_-]/g, '')
+          .slice(-48) || 'response'
+      }`,
       type: 'message',
       status: 'completed',
       role: 'assistant',

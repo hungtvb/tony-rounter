@@ -149,7 +149,8 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   ];
   const logger = options.logger ?? createJsonLogger({ sensitiveValues });
   const models = [...(options.models ?? [])];
-  const routedAccountClients = options.routedAccounts ?? options.routedProviders;
+  const routedAccountClients =
+    options.routedAccounts ?? options.routedProviders;
   const provider =
     options.provider ??
     (config.upstream
@@ -264,7 +265,8 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
           ? { accountCount: routedAccountCount }
           : {}),
         credentialConfigured: Boolean(
-          config.upstream?.apiKey || routerSensitiveValues(options.router).length,
+          config.upstream?.apiKey ||
+          routerSensitiveValues(options.router).length,
         ),
       },
       ...(routingInventory ? { routing: routingInventory } : {}),
