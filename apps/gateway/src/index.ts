@@ -34,6 +34,7 @@ export {
 export type {
   GatewayRouterConfig,
   LoadGatewayRouterConfigOptions,
+  RoutedAccountConfig,
   RoutedProviderConfig,
 } from './routing/config.js';
 export { RoutedOpenAIProvider } from './routing/provider.js';

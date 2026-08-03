@@ -37,6 +37,7 @@ async function main(): Promise<void> {
       routedProviders: router
         ? Object.keys(router.registry.providers).length
         : 0,
+      routedAccounts: router ? Object.keys(router.registry.accounts).length : 0,
       ...(config.tokenSource === 'environment'
         ? {}
         : { tokenFile: config.tokenFile }),

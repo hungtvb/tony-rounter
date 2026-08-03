@@ -22,7 +22,7 @@ import type {
   CanonicalModelList,
   ChatCompletionRequest,
 } from '../openai/protocol.js';
-import type { GatewayRouterConfig } from './config.js';
+import type { GatewayRouterConfig, RoutedAccountConfig } from './config.js';
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,200}$/;
 
@@ -47,6 +47,8 @@ export interface RoutedChatCompletionResult {
 export interface RoutedOpenAIProviderOptions {
   readonly config: GatewayRouterConfig;
   readonly logger: JsonLogger;
+  readonly accounts?: Readonly<Record<string, OpenAICompatibleProvider>>;
+  /** @deprecated Use accounts. Preserved for version 1 integrations. */
   readonly providers?: Readonly<Record<string, OpenAICompatibleProvider>>;
 }
 
@@ -143,42 +145,64 @@ function gatewayError(error: unknown): GatewayHttpError {
   }
 }
 
-function validateProviderMap(
+function validateAccountMap(
   config: GatewayRouterConfig,
-  providers: Readonly<Record<string, OpenAICompatibleProvider>>,
+  accounts: Readonly<Record<string, OpenAICompatibleProvider>>,
 ): void {
-  for (const providerId of Object.keys(config.registry.providers)) {
-    if (!providers[providerId]) {
+  for (const accountId of Object.keys(config.registry.accounts)) {
+    if (!accounts[accountId]) {
       throw new GatewayHttpError(
         503,
-        'provider_not_configured',
-        `Routing provider ${providerId} has no runtime client`,
+        'account_not_configured',
+        `Routing account ${accountId} has no runtime client`,
       );
     }
   }
 }
 
+function accountConfigs(
+  config: GatewayRouterConfig,
+): Readonly<Record<string, RoutedAccountConfig>> {
+  if (config.accounts) return config.accounts;
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(config.providers).map(([providerId, provider]) => [
+        providerId,
+        Object.freeze({ providerId, ...provider }),
+      ]),
+    ),
+  );
+}
+
 export class RoutedOpenAIProvider {
   readonly #config: GatewayRouterConfig;
-  readonly #providers: Readonly<Record<string, OpenAICompatibleProvider>>;
+  readonly #accounts: Readonly<Record<string, OpenAICompatibleProvider>>;
   readonly #circuits: CircuitBreakerRegistry;
   readonly #affinity = new InMemorySessionAffinityStore(10_000);
 
   constructor(options: RoutedOpenAIProviderOptions) {
     this.#config = options.config;
-    this.#providers =
+    if (options.accounts && options.providers) {
+      throw new GatewayHttpError(
+        500,
+        'conflicting_account_configuration',
+        'Routed account clients cannot be supplied through both accounts and providers',
+      );
+    }
+    this.#accounts =
+      options.accounts ??
       options.providers ??
       Object.freeze(
         Object.fromEntries(
-          Object.entries(options.config.providers).map(
-            ([providerId, provider]) => [
-              providerId,
-              new OpenAICompatibleClient(provider, options.logger),
+          Object.entries(accountConfigs(options.config)).map(
+            ([accountId, account]) => [
+              accountId,
+              new OpenAICompatibleClient(account, options.logger),
             ],
           ),
         ),
       );
-    validateProviderMap(options.config, this.#providers);
+    validateAccountMap(options.config, this.#accounts);
     this.#circuits = new CircuitBreakerRegistry(options.config.circuitBreaker);
   }
 
@@ -228,12 +252,12 @@ export class RoutedOpenAIProvider {
             : {}),
         }),
         operation: async ({ route, signal }) => {
-          const provider = this.#providers[route.providerId];
+          const provider = this.#accounts[route.accountId];
           if (!provider) {
             throw new GatewayHttpError(
               503,
-              'provider_not_configured',
-              `Routing provider ${route.providerId} has no runtime client`,
+              'account_not_configured',
+              `Routing account ${route.accountId} has no runtime client`,
             );
           }
 
@@ -255,7 +279,7 @@ export class RoutedOpenAIProvider {
         replaySafe: context.replaySafe,
         ...(context.sessionId ? { sessionId: context.sessionId } : {}),
         affinityStore: this.#affinity,
-        accountIdForRoute: (route) => route.providerId,
+        accountIdForRoute: (route) => route.accountId,
         signal: context.signal,
       });
 

@@ -1,13 +1,19 @@
-version: 1
+version: 2
 defaultProfile: coding
 
 providers:
-  primary:
+  openai:
     kind: openai-compatible
+
+accounts:
+  personal:
+    provider: openai
+  work:
+    provider: openai
 
 models:
   fast:
-    provider: primary
+    provider: openai
     upstreamModel: fast-model
     capabilities:
       tools: true
@@ -17,7 +23,7 @@ models:
       contextTokens: 128000
 
   vision:
-    provider: primary
+    provider: openai
     upstreamModel: vision-model
     capabilities:
       tools: true
@@ -27,20 +33,30 @@ models:
       contextTokens: 200000
 
 routes:
-  fast-primary:
+  fast-personal:
     model: fast
+    account: personal
+    enabled: true
+    priority: 30
+
+  fast-work:
+    model: fast
+    account: work
     enabled: true
     priority: 20
 
-  vision-primary:
+  vision-work:
     model: vision
+    account: work
     enabled: true
     priority: 10
 
 profiles:
   coding:
     routes:
-      - route: fast-primary
+      - route: fast-personal
         priority: 100
-      - route: vision-primary
+      - route: fast-work
+        priority: 90
+      - route: vision-work
         priority: 50
