@@ -1,0 +1,48 @@
+name: ChatGPT Source Export Phase 7
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/chatgpt-source-export-p7.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    if: github.head_ref == 'automation/chatgpt-source-export-p7'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact main revision
+        uses: actions/checkout@v4
+        with:
+          ref: f963d906a7811be1e01c3370c9cbe2680a47c7c3
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify and package repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "f963d906a7811be1e01c3370c9cbe2680a47c7c3"
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --local --unset-all credential.helper || true
+          test -z "$(git status --short)"
+          archive="$RUNNER_TEMP/tony-rounter-main-with-git.tar.gz"
+          tar -czf "$archive" .
+          sha256sum "$archive" > "$RUNNER_TEMP/tony-rounter-main-with-git.tar.gz.sha256"
+          printf '{"repository":"hungtvb/tony-rounter","branch":"main","sha":"f963d906a7811be1e01c3370c9cbe2680a47c7c3"}\n' > "$RUNNER_TEMP/job-report.json"
+
+      - name: Upload exact source
+        uses: actions/upload-artifact@v4
+        with:
+          name: tony-rounter-main-with-git-p7
+          path: |
+            ${{ runner.temp }}/tony-rounter-main-with-git.tar.gz
+            ${{ runner.temp }}/tony-rounter-main-with-git.tar.gz.sha256
+            ${{ runner.temp }}/job-report.json
+          retention-days: 1
+          if-no-files-found: error
