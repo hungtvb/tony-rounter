@@ -57,6 +57,8 @@ export type { ChatCapabilityOptions } from './routing/request.js';
 export type {
   EngineRouteInput,
   ProviderKind,
+  RoutingAccount,
+  RoutingConfigVersion,
   RouteCandidateTrace,
   RouteRejection,
   RouteRejectionCode,
