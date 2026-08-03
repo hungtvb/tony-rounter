@@ -35,19 +35,44 @@ jobs:
       - name: Update workspace lockfile
         run: pnpm install --no-frozen-lockfile
 
-      - name: Apply test contract annotation
+      - name: Apply Phase 4 type and test fixes
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('apps/gateway/test/routed-gateway.test.ts')
-          text = path.read_text()
+          provider = Path('apps/gateway/src/routing/provider.ts')
+          text = provider.read_text()
+          old = '''    try {
+      const execution = await executeRoutedRequest({
+        config: this.#config.registry,
+        profileId: request.model,
+        requiredCapabilities: deriveChatRequestCapabilities(request, {
+          ...(outputReserve(request) !== undefined
+            ? { reservedOutputTokens: outputReserve(request) }
+            : {}),
+        }),'''
+          new = '''    try {
+      const reservedOutputTokens = outputReserve(request);
+      const execution = await executeRoutedRequest({
+        config: this.#config.registry,
+        profileId: request.model,
+        requiredCapabilities: deriveChatRequestCapabilities(request, {
+          ...(reservedOutputTokens !== undefined
+            ? { reservedOutputTokens }
+            : {}),
+        }),'''
+          if text.count(old) != 1:
+              raise SystemExit('capability option anchor changed')
+          provider.write_text(text.replace(old, new, 1))
+
+          test = Path('apps/gateway/test/routed-gateway.test.ts')
+          test_text = test.read_text()
           directive = (
               '/* eslint-disable @typescript-eslint/require-await -- '
               'provider doubles intentionally implement asynchronous interfaces */\n\n'
           )
-          if not text.startswith('/* eslint-disable @typescript-eslint/require-await'):
-              path.write_text(directive + text)
+          if not test_text.startswith('/* eslint-disable @typescript-eslint/require-await'):
+              test.write_text(directive + test_text)
           PY
 
       - name: Format Phase 4 files and restore CI
