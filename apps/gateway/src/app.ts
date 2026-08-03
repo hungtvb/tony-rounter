@@ -18,6 +18,11 @@ import {
   type OpenAICompatibleProvider,
 } from './openai/client.js';
 import { parseChatCompletionRequest } from './openai/protocol.js';
+import {
+  chatCompletionToResponse,
+  parseResponsesRequest,
+  responsesToChatCompletion,
+} from './openai/responses.js';
 import { createRequestAbortContext } from './request-abort.js';
 import type { GatewayRouterConfig } from './routing/config.js';
 import { routerSensitiveValues } from './routing/config.js';
@@ -144,8 +149,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   ];
   const logger = options.logger ?? createJsonLogger({ sensitiveValues });
   const models = [...(options.models ?? [])];
-  const routedAccountClients =
-    options.routedAccounts ?? options.routedProviders;
+  const routedAccountClients = options.routedAccounts ?? options.routedProviders;
   const provider =
     options.provider ??
     (config.upstream
@@ -183,7 +187,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   });
 
   installRequestDeadline(app, config.requestTimeoutMs, {
-    skipPaths: new Set(['/v1/models', '/v1/chat/completions']),
+    skipPaths: new Set(['/v1/models', '/v1/chat/completions', '/v1/responses']),
   });
   installBearerAuthentication(app, config.token);
 
@@ -260,8 +264,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
           ? { accountCount: routedAccountCount }
           : {}),
         credentialConfigured: Boolean(
-          config.upstream?.apiKey ||
-          routerSensitiveValues(options.router).length,
+          config.upstream?.apiKey || routerSensitiveValues(options.router).length,
         ),
       },
       ...(routingInventory ? { routing: routingInventory } : {}),
@@ -299,6 +302,58 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
         requestId: request.id,
         signal: abortContext.signal,
       });
+    } finally {
+      abortContext.cleanup();
+    }
+  });
+
+  app.post('/v1/responses', async (request, reply) => {
+    if (!provider && !routed) {
+      throw new GatewayHttpError(
+        503,
+        'provider_not_configured',
+        'No OpenAI-compatible upstream is configured',
+      );
+    }
+
+    const responsesRequest = parseResponsesRequest(request.body);
+    const chatRequest = responsesToChatCompletion(responsesRequest);
+    const abortContext = createRequestAbortContext(request, reply);
+
+    try {
+      const sessionId = singleHeader(request, 'x-tony-router-session');
+      const routedResult = routed
+        ? await routed.createChatCompletion(chatRequest, {
+            requestId: request.id,
+            signal: abortContext.signal,
+            replaySafe: replaySafe(request),
+            ...(sessionId ? { sessionId } : {}),
+          })
+        : undefined;
+      const result = routedResult
+        ? routedResult.result
+        : await provider!.createChatCompletion(chatRequest, {
+            requestId: request.id,
+            signal: abortContext.signal,
+          });
+
+      if (routedResult) {
+        reply.header('x-tony-router-route', routedResult.route.routeId);
+        reply.header('x-tony-router-provider', routedResult.route.providerId);
+        reply.header('x-tony-router-account', routedResult.route.accountId);
+        reply.header('x-tony-router-attempts', routedResult.attempts);
+      }
+
+      if (result.stream) {
+        result.body.destroy();
+        throw new GatewayHttpError(
+          502,
+          'upstream_protocol_mismatch',
+          'Upstream unexpectedly returned a stream for a non-streaming response',
+        );
+      }
+
+      return chatCompletionToResponse(result.body, responsesRequest.model);
     } finally {
       abortContext.cleanup();
     }
