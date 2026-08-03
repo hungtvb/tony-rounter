@@ -1,0 +1,94 @@
+diff --git a/apps/gateway/src/control/routes.ts b/apps/gateway/src/control/routes.ts
+index 3dedfed..fdf05f3 100644
+--- a/apps/gateway/src/control/routes.ts
++++ b/apps/gateway/src/control/routes.ts
+@@ -4,10 +4,8 @@ import { GatewayHttpError } from '../errors.js';
+ import { createRequestAbortContext } from '../request-abort.js';
+ import { GatewayRouterConfigError } from '../routing/config.js';
+ import type { RoutedOpenAIProvider } from '../routing/provider.js';
+-import {
+-  LocalConfigStore,
+-  LocalConfigStoreError,
+-} from './config-store.js';
++import { LocalConfigStoreError } from './config-store.js';
++import type { LocalConfigStore } from './config-store.js';
+ 
+ interface ConfigSourcesPayload {
+   readonly routingSource: string;
+@@ -142,7 +140,7 @@ export function installControlRoutes(
+   app: FastifyInstance,
+   options: InstallControlRoutesOptions,
+ ): void {
+-  app.post('/ui/api/control/validate', async (request) => {
++  app.post('/ui/api/control/validate', (request) => {
+     try {
+       const payload = configSources(request.body);
+       return {
+diff --git a/apps/gateway/test/control-config-store.test.ts b/apps/gateway/test/control-config-store.test.ts
+index 6d4b991..0a2f9b3 100644
+--- a/apps/gateway/test/control-config-store.test.ts
++++ b/apps/gateway/test/control-config-store.test.ts
+@@ -11,10 +11,8 @@ import { join } from 'node:path';
+ 
+ import { afterEach, describe, expect, it } from 'vitest';
+ 
+-import {
+-  LocalConfigStore,
+-  LocalConfigStoreError,
+-} from '../src/control/config-store.js';
++import { LocalConfigStore } from '../src/control/config-store.js';
++import type { LocalConfigStoreError } from '../src/control/config-store.js';
+ 
+ const directories: string[] = [];
+ 
+diff --git a/apps/gateway/test/control-plane.test.ts b/apps/gateway/test/control-plane.test.ts
+index e0b8d2a..54f7e10 100644
+--- a/apps/gateway/test/control-plane.test.ts
++++ b/apps/gateway/test/control-plane.test.ts
+@@ -298,8 +298,9 @@ describe('trusted local control plane', () => {
+ 
+   it('returns bounded secret-safe account health outcomes', async () => {
+     const healthy: OpenAICompatibleProvider = {
+-      listModels: async () => ({ object: 'list', data: [] }),
+-      createChatCompletion: async () => ({ stream: false, body: {} }),
++      listModels: () => Promise.resolve({ object: 'list', data: [] }),
++      createChatCompletion: () =>
++        Promise.resolve({ stream: false, body: {} }),
+     };
+     const app = track(
+       buildGateway({
+@@ -328,14 +329,16 @@ describe('trusted local control plane', () => {
+     expect(success.body).not.toContain('authorization');
+ 
+     const rejected: OpenAICompatibleProvider = {
+-      listModels: async () => {
+-        throw new GatewayHttpError(
+-          502,
+-          'upstream_authentication_failed',
+-          `Rejected ${SECRET}`,
+-        );
+-      },
+-      createChatCompletion: async () => ({ stream: false, body: {} }),
++      listModels: () =>
++        Promise.reject(
++          new GatewayHttpError(
++            502,
++            'upstream_authentication_failed',
++            `Rejected ${SECRET}`,
++          ),
++        ),
++      createChatCompletion: () =>
++        Promise.resolve({ stream: false, body: {} }),
+     };
+     const rejectedApp = track(
+       buildGateway({
+@@ -364,7 +367,8 @@ describe('trusted local control plane', () => {
+   it('bounds health probes even when an account adapter ignores cancellation', async () => {
+     const stalled: OpenAICompatibleProvider = {
+       listModels: () => new Promise<never>(() => undefined),
+-      createChatCompletion: async () => ({ stream: false, body: {} }),
++      createChatCompletion: () =>
++        Promise.resolve({ stream: false, body: {} }),
+     };
+     const routed = new RoutedOpenAIProvider({
+       config: routerConfig(),
