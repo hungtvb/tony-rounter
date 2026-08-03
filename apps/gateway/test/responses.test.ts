@@ -128,6 +128,8 @@ describe('POST /v1/responses', () => {
         instructions: 'Be concise.',
         input: 'Say hello.',
         max_output_tokens: 20,
+        store: false,
+        background: false,
       },
     });
 
@@ -140,7 +142,7 @@ describe('POST /v1/responses', () => {
         { role: 'user', content: 'Say hello.' },
       ],
       stream: false,
-      max_tokens: 20,
+      max_completion_tokens: 20,
     });
     expect(response.json()).toMatchObject({
       id: 'chatcmpl_gateway',
@@ -162,6 +164,30 @@ describe('POST /v1/responses', () => {
       ],
       usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
     });
+  });
+
+  it('rejects malformed generation controls before calling the provider', async () => {
+    const createChatCompletion = vi.fn();
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: { model: 'coding', input: 'hello', max_output_tokens: '20' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: { code: 'invalid_request' },
+    });
+    expect(createChatCompletion).not.toHaveBeenCalled();
   });
 
   it('rejects unsupported streaming before calling the provider', async () => {
