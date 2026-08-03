@@ -95,10 +95,6 @@ function replaySafe(request: FastifyRequest): boolean {
   );
 }
 
-function installStreamingHeaders(reply: Parameters<FastifyInstance['post']>[1] extends never ? never : never): never {
-  return reply;
-}
-
 export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   const { config } = options;
   if (options.router && (options.provider || config.upstream)) {
