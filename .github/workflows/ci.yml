@@ -36,7 +36,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Apply public model hardening
-        run: python .github/phase4-public-model.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/phase4-public-model.py
+          python -c 'from pathlib import Path; p=Path("apps/gateway/src/openai/client.ts"); s=p.read_text(); old="""canonicalEvents(\n          decoder.push(byteChunk(chunk.value)),\n          state,\n        )"""; new="""canonicalEvents(\n          decoder.push(byteChunk(chunk.value)),\n          state,\n          responseModel,\n        )"""; assert s.count(old) == 1; p.write_text(s.replace(old, new, 1))'
 
       - name: Restore standard CI and remove temporary files
         shell: bash
