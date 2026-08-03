@@ -17,6 +17,7 @@ export interface UiRuntimeInfo {
     readonly mode: UiProviderMode;
     readonly baseUrl?: string;
     readonly providerCount?: number;
+    readonly accountCount?: number;
     readonly credentialConfigured: boolean;
   };
 }
