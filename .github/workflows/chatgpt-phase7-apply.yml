@@ -43,8 +43,11 @@ jobs:
           set -euo pipefail
           cat .phase7/patch.part-* | base64 --decode | gunzip > "$RUNNER_TEMP/phase7.patch"
           echo '1f31b62c6cd2b6cce450b54eab973020d4d269caded3d414d2dcfcbe3b84614a  '"$RUNNER_TEMP/phase7.patch" | sha256sum --check --strict
+          echo 'de5477d210cd3fe9d540f2fe985a9e9aeeccc36241fb80c6d3019fd0bccebd0c  .phase7/lint-fix.patch' | sha256sum --check --strict
           git apply --check "$RUNNER_TEMP/phase7.patch"
           git apply "$RUNNER_TEMP/phase7.patch"
+          git apply --check .phase7/lint-fix.patch
+          git apply .phase7/lint-fix.patch
           rm -rf .phase7 .phase7-placeholder .github/workflows/chatgpt-phase7-apply.yml
 
       - name: Format
