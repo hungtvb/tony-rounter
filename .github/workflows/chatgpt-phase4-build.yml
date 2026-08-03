@@ -1,0 +1,118 @@
+name: ChatGPT Phase 4 Build
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/chatgpt-phase4-build.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout clean Phase 4 branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/multi-provider-gateway-clean
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Import Phase 4 product source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feat/multi-provider-gateway
+          git checkout origin/feat/multi-provider-gateway -- \
+            package.json \
+            apps/gateway/package.json \
+            apps/gateway/src/app.ts \
+            apps/gateway/src/index.ts \
+            apps/gateway/src/server.ts \
+            apps/gateway/src/ui.ts \
+            apps/gateway/src/ui-assets/client-part-2.ts \
+            apps/gateway/src/routing/config.ts \
+            apps/gateway/src/routing/provider.ts \
+            apps/gateway/test/router-config.test.ts \
+            apps/gateway/test/routed-gateway.test.ts \
+            docs/multi-provider-gateway.md
+
+      - name: Apply Phase 4 correctness fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          provider = Path('apps/gateway/src/routing/provider.ts')
+          text = provider.read_text()
+          old = '''    try {
+      const execution = await executeRoutedRequest({
+        config: this.#config.registry,
+        profileId: request.model,
+        requiredCapabilities: deriveChatRequestCapabilities(request, {
+          ...(outputReserve(request) !== undefined
+            ? { reservedOutputTokens: outputReserve(request) }
+            : {}),
+        }),'''
+          new = '''    try {
+      const reservedOutputTokens = outputReserve(request);
+      const execution = await executeRoutedRequest({
+        config: this.#config.registry,
+        profileId: request.model,
+        requiredCapabilities: deriveChatRequestCapabilities(request, {
+          ...(reservedOutputTokens !== undefined
+            ? { reservedOutputTokens }
+            : {}),
+        }),'''
+          if text.count(old) != 1:
+              raise SystemExit('capability option anchor changed')
+          provider.write_text(text.replace(old, new, 1))
+
+          test = Path('apps/gateway/test/routed-gateway.test.ts')
+          test_text = test.read_text()
+          directive = (
+              '/* eslint-disable @typescript-eslint/require-await -- '
+              'provider doubles intentionally implement asynchronous interfaces */\n\n'
+          )
+          if not test_text.startswith('/* eslint-disable @typescript-eslint/require-await'):
+              test.write_text(directive + test_text)
+          PY
+
+      - name: Install and update workspace lockfile
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Remove temporary workflow and format
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/chatgpt-phase4-build.yml
+          pnpm format
+
+      - name: Verify repository
+        run: pnpm verify
+
+      - name: Commit verified Phase 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(gateway): wire multi-provider routing runtime"
+          git push origin HEAD:feat/multi-provider-gateway-clean
