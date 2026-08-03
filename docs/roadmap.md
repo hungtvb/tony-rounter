@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Implementation note (2026-08-03):** The repository has delivered multi-provider routed runtime, first-class provider accounts, a local provider-first web control plane, atomic managed-config generations with rollback, and bounded account health probes ahead of the original phase numbering below. Treat current code, tests, and active GitHub issues as authoritative; this document remains the long-range protocol/desktop roadmap.
+> **Implementation note (2026-08-03):** The repository has delivered multi-provider routed runtime, first-class provider accounts, a local provider-first web control plane, atomic managed-config generations with rollback, bounded account health probes, and the first non-streaming OpenAI Responses compatibility slice ahead of the original phase numbering below. Treat current code, tests, and active GitHub issues as authoritative; this document remains the long-range protocol/desktop roadmap.
 
 ## Delivery strategy
 
@@ -66,16 +66,28 @@ Build the smallest verifiable routing core first. Each phase should end with exe
 
 ## Phase 4 — OpenAI Responses API
 
-- `/v1/responses` request parsing;
-- canonical tool-call mapping;
-- response event encoding;
-- structured-output validation;
-- compatibility matrix documented.
+Delivered initial slice:
+
+- authenticated non-streaming `/v1/responses` request parsing;
+- text message and instruction translation through the existing routed Chat Completions runtime;
+- function tool and named tool-choice mapping;
+- response text, function-call, usage, and public-model normalization;
+- explicit rejection of unsupported streaming, image, hosted-tool, stored, background, and chained-response features;
+- gateway contracts for authentication, missing provider, successful translation, and upstream protocol mismatch.
+
+Remaining:
+
+- Responses SSE event stream;
+- image input and capability-preserving multimodal mapping;
+- structured-output validation and compatibility matrix;
+- additional Codex-style fixtures;
+- optional stored/chained/background semantics only after their ownership and persistence boundaries are defined.
 
 **Exit evidence**
 
-- Codex-style Responses API fixture passes through the gateway;
-- tool calls and usage remain protocol-correct.
+- Codex-style Responses API fixtures pass through the gateway;
+- tool calls and usage remain protocol-correct;
+- unsupported feature downgrade requires explicit policy rather than silent omission.
 
 ## Phase 5 — Multiple providers
 
