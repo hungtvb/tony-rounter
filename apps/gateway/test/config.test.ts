@@ -130,4 +130,66 @@ describe('loadGatewayConfig', () => {
       'TONY_ROUTER_ALLOW_NON_LOOPBACK must be either true or false',
     );
   });
+  it('enables trusted local control only on loopback with an absolute isolated directory', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'tony-router-control-config-'),
+    );
+    temporaryDirectories.push(directory);
+
+    const resolved = await loadGatewayConfig({
+      env: {
+        TONY_ROUTER_TOKEN: TOKEN,
+        TONY_ROUTER_CONTROL_DIR: directory,
+      },
+    });
+    expect(resolved.controlDir).toBe(directory);
+
+    await expect(
+      loadGatewayConfig({
+        env: {
+          TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_CONTROL_DIR: 'relative/control',
+        },
+      }),
+    ).rejects.toThrow('must be an absolute local path');
+
+    await expect(
+      loadGatewayConfig({
+        env: {
+          TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_HOST: '0.0.0.0',
+          TONY_ROUTER_ALLOW_NON_LOOPBACK: 'true',
+          TONY_ROUTER_CONTROL_DIR: directory,
+        },
+      }),
+    ).rejects.toThrow('allowed only when the gateway binds to loopback');
+  });
+
+  it('rejects ambiguous managed, explicit-file, and legacy provider modes', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'tony-router-control-mode-'),
+    );
+    temporaryDirectories.push(directory);
+
+    await expect(
+      loadGatewayConfig({
+        env: {
+          TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_CONTROL_DIR: directory,
+          TONY_ROUTER_ROUTING_CONFIG_FILE: '/tmp/router.yaml',
+          TONY_ROUTER_PROVIDER_CONFIG_FILE: '/tmp/providers.json',
+        },
+      }),
+    ).rejects.toThrow('cannot be mixed with explicit routed config file paths');
+
+    await expect(
+      loadGatewayConfig({
+        env: {
+          TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_CONTROL_DIR: directory,
+          TONY_ROUTER_UPSTREAM_BASE_URL: 'https://api.example.test/v1',
+        },
+      }),
+    ).rejects.toThrow('cannot be mixed with legacy upstream settings');
+  });
 });

@@ -1,4 +1,5 @@
 import { buildGateway } from './app.js';
+import { LocalConfigStore } from './control/config-store.js';
 import { loadGatewayConfig } from './config.js';
 import { createJsonLogger } from './logger.js';
 import {
@@ -8,10 +9,21 @@ import {
 import { createGracefulShutdown, installSignalHandlers } from './shutdown.js';
 
 async function main(): Promise<void> {
-  const [config, router] = await Promise.all([
-    loadGatewayConfig(),
-    loadGatewayRouterConfig(),
-  ]);
+  const config = await loadGatewayConfig();
+  const controlStore = config.controlDir
+    ? new LocalConfigStore(config.controlDir)
+    : undefined;
+  const managedSources = await controlStore?.loadActiveSources();
+  const router = await loadGatewayRouterConfig(
+    managedSources
+      ? {
+          sources: {
+            routingSource: managedSources.routingSource,
+            bindingSource: managedSources.bindingSource,
+          },
+        }
+      : {},
+  );
   const logger = createJsonLogger({
     sensitiveValues: [
       config.token,
@@ -19,7 +31,12 @@ async function main(): Promise<void> {
       ...routerSensitiveValues(router),
     ],
   });
-  const app = buildGateway({ config, logger, ...(router ? { router } : {}) });
+  const app = buildGateway({
+    config,
+    logger,
+    ...(router ? { router } : {}),
+    ...(controlStore ? { controlStore } : {}),
+  });
   const shutdown = createGracefulShutdown(app, config.shutdownGraceMs, logger);
   const uninstallSignals = installSignalHandlers(shutdown, logger);
 
@@ -38,6 +55,10 @@ async function main(): Promise<void> {
         ? Object.keys(router.registry.providers).length
         : 0,
       routedAccounts: router ? Object.keys(router.registry.accounts).length : 0,
+      localControlEnabled: controlStore !== undefined,
+      ...(managedSources
+        ? { activeConfigGeneration: managedSources.generationId }
+        : {}),
       ...(config.tokenSource === 'environment'
         ? {}
         : { tokenFile: config.tokenFile }),

@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 
 import { installBearerAuthentication } from './auth.js';
+import type { LocalConfigStore } from './control/config-store.js';
+import { installControlRoutes } from './control/routes.js';
 import type { GatewayConfig } from './config.js';
 import { installRequestDeadline } from './deadline.js';
 import {
@@ -42,6 +44,7 @@ export interface BuildGatewayOptions {
   readonly routedAccounts?: Readonly<Record<string, OpenAICompatibleProvider>>;
   /** @deprecated Use routedAccounts. Preserved for version 1 integrations. */
   readonly routedProviders?: Readonly<Record<string, OpenAICompatibleProvider>>;
+  readonly controlStore?: LocalConfigStore;
 }
 
 function requestPath(request: FastifyRequest): string {
@@ -93,6 +96,36 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
       500,
       'conflicting_provider_configuration',
       'Routed and legacy provider modes cannot be enabled together',
+    );
+  }
+
+  if (Boolean(config.controlDir) !== Boolean(options.controlStore)) {
+    throw new GatewayHttpError(
+      500,
+      'invalid_local_control_configuration',
+      'Local control directory and store must be configured together',
+    );
+  }
+  if (
+    options.controlStore &&
+    config.host !== '127.0.0.1' &&
+    config.host !== '::1'
+  ) {
+    throw new GatewayHttpError(
+      500,
+      'unsafe_local_control_binding',
+      'Local control APIs require a loopback gateway binding',
+    );
+  }
+  if (
+    config.controlDir &&
+    options.controlStore &&
+    config.controlDir !== options.controlStore.directory
+  ) {
+    throw new GatewayHttpError(
+      500,
+      'mismatched_local_control_directory',
+      'Local control store does not match the configured directory',
     );
   }
 
@@ -233,6 +266,11 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
       },
       ...(routingInventory ? { routing: routingInventory } : {}),
     },
+    ...(options.controlStore ? { controlStore: options.controlStore } : {}),
+  });
+  installControlRoutes(app, {
+    ...(options.controlStore ? { store: options.controlStore } : {}),
+    ...(routed ? { routed } : {}),
   });
 
   app.get('/health', () => ({

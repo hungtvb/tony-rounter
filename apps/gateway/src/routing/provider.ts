@@ -25,6 +25,8 @@ import type {
 import type { GatewayRouterConfig, RoutedAccountConfig } from './config.js';
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,200}$/;
+const ACCOUNT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const HEALTH_PROBE_TIMEOUT_MS = 10_000;
 
 function compareIdentifier(left: string, right: string): number {
   if (left < right) return -1;
@@ -44,12 +46,30 @@ export interface RoutedChatCompletionResult {
   readonly trace: readonly ExecutionTraceEvent[];
 }
 
+export type AccountHealthStatus =
+  | 'healthy'
+  | 'authentication_failed'
+  | 'rate_limited'
+  | 'timeout'
+  | 'unavailable'
+  | 'invalid_response';
+
+export interface AccountHealthProbeResult {
+  readonly accountId: string;
+  readonly providerId: string;
+  readonly status: AccountHealthStatus;
+  readonly checkedAt: string;
+  readonly latencyMs: number;
+  readonly httpStatusClass?: '4xx' | '5xx';
+}
+
 export interface RoutedOpenAIProviderOptions {
   readonly config: GatewayRouterConfig;
   readonly logger: JsonLogger;
   readonly accounts?: Readonly<Record<string, OpenAICompatibleProvider>>;
   /** @deprecated Use accounts. Preserved for version 1 integrations. */
   readonly providers?: Readonly<Record<string, OpenAICompatibleProvider>>;
+  readonly healthProbeTimeoutMs?: number;
 }
 
 function outputReserve(request: ChatCompletionRequest): number | undefined {
@@ -145,6 +165,32 @@ function gatewayError(error: unknown): GatewayHttpError {
   }
 }
 
+function healthStatus(error: unknown): {
+  readonly status: Exclude<AccountHealthStatus, 'healthy'>;
+  readonly httpStatusClass?: '4xx' | '5xx';
+} {
+  if (!(error instanceof GatewayHttpError)) {
+    return { status: 'unavailable' };
+  }
+  switch (error.code) {
+    case 'upstream_authentication_failed':
+      return { status: 'authentication_failed', httpStatusClass: '4xx' };
+    case 'upstream_rate_limited':
+      return { status: 'rate_limited', httpStatusClass: '4xx' };
+    case 'upstream_timeout':
+      return { status: 'timeout' };
+    case 'upstream_invalid_request':
+      return { status: 'invalid_response', httpStatusClass: '4xx' };
+    case 'upstream_unavailable':
+      return { status: 'unavailable', httpStatusClass: '5xx' };
+    case 'upstream_invalid_response':
+    case 'upstream_response_too_large':
+      return { status: 'invalid_response' };
+    default:
+      return { status: 'unavailable' };
+  }
+}
+
 function validateAccountMap(
   config: GatewayRouterConfig,
   accounts: Readonly<Record<string, OpenAICompatibleProvider>>,
@@ -178,6 +224,7 @@ export class RoutedOpenAIProvider {
   readonly #config: GatewayRouterConfig;
   readonly #accounts: Readonly<Record<string, OpenAICompatibleProvider>>;
   readonly #circuits: CircuitBreakerRegistry;
+  readonly #healthProbeTimeoutMs: number;
   readonly #affinity = new InMemorySessionAffinityStore(10_000);
 
   constructor(options: RoutedOpenAIProviderOptions) {
@@ -203,6 +250,20 @@ export class RoutedOpenAIProvider {
         ),
       );
     validateAccountMap(options.config, this.#accounts);
+    const healthProbeTimeoutMs =
+      options.healthProbeTimeoutMs ?? HEALTH_PROBE_TIMEOUT_MS;
+    if (
+      !Number.isSafeInteger(healthProbeTimeoutMs) ||
+      healthProbeTimeoutMs < 10 ||
+      healthProbeTimeoutMs > HEALTH_PROBE_TIMEOUT_MS
+    ) {
+      throw new GatewayHttpError(
+        500,
+        'invalid_health_probe_timeout',
+        'Health probe timeout must be between 10 and 10000 milliseconds',
+      );
+    }
+    this.#healthProbeTimeoutMs = healthProbeTimeoutMs;
     this.#circuits = new CircuitBreakerRegistry(options.config.circuitBreaker);
   }
 
@@ -220,6 +281,99 @@ export class RoutedOpenAIProvider {
           }),
         ),
     });
+  }
+
+  async probeAccount(
+    accountId: string,
+    context: ProviderRequestContext,
+  ): Promise<AccountHealthProbeResult> {
+    if (!ACCOUNT_ID_PATTERN.test(accountId)) {
+      throw new GatewayHttpError(
+        400,
+        'invalid_account_id',
+        'Account ID is invalid',
+      );
+    }
+    const account = this.#config.registry.accounts[accountId];
+    const provider = this.#accounts[accountId];
+    if (!account || !provider) {
+      throw new GatewayHttpError(
+        404,
+        'account_not_found',
+        'The requested routing account does not exist',
+      );
+    }
+
+    const controller = new AbortController();
+    let probeTimedOut = false;
+    let rejectCancellation: (error: GatewayHttpError) => void = () => undefined;
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      rejectCancellation = reject;
+    });
+    const abortFromCaller = (): void => {
+      controller.abort(context.signal.reason);
+      rejectCancellation(
+        new GatewayHttpError(
+          499,
+          'client_closed_request',
+          'Client disconnected before the account probe completed',
+        ),
+      );
+    };
+    const timeout = setTimeout(() => {
+      probeTimedOut = true;
+      controller.abort(new Error('health probe timeout'));
+      rejectCancellation(
+        new GatewayHttpError(
+          504,
+          'upstream_timeout',
+          'Account health probe exceeded its timeout',
+        ),
+      );
+    }, this.#healthProbeTimeoutMs);
+    timeout.unref();
+    if (context.signal.aborted) abortFromCaller();
+    else
+      context.signal.addEventListener('abort', abortFromCaller, { once: true });
+    const startedAt = Date.now();
+
+    try {
+      await Promise.race([
+        provider.listModels({
+          requestId: context.requestId,
+          signal: controller.signal,
+        }),
+        cancellation,
+      ]);
+      return Object.freeze({
+        accountId,
+        providerId: account.providerId,
+        status: 'healthy',
+        checkedAt: new Date().toISOString(),
+        latencyMs: Date.now() - startedAt,
+      });
+    } catch (error) {
+      if (context.signal.aborted && !probeTimedOut) {
+        throw new GatewayHttpError(
+          499,
+          'client_closed_request',
+          'Client disconnected before the account probe completed',
+        );
+      }
+      const classified = probeTimedOut
+        ? { status: 'timeout' as const }
+        : healthStatus(error);
+      return Object.freeze({
+        accountId,
+        providerId: account.providerId,
+        ...classified,
+        checkedAt: new Date().toISOString(),
+        latencyMs: Date.now() - startedAt,
+      });
+    } finally {
+      clearTimeout(timeout);
+      context.signal.removeEventListener('abort', abortFromCaller);
+    }
   }
 
   async createChatCompletion(

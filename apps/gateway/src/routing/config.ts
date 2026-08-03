@@ -34,6 +34,26 @@ export interface GatewayRouterConfig {
 
 export interface LoadGatewayRouterConfigOptions {
   readonly env?: NodeJS.ProcessEnv;
+  readonly sources?: {
+    readonly routingSource: string;
+    readonly bindingSource: string;
+  };
+}
+
+export interface ParseGatewayRouterSourcesOptions {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly requireCredentials?: boolean;
+}
+
+export interface ParsedGatewayRouterSources {
+  readonly config: GatewayRouterConfig;
+  readonly missingCredentialEnvironmentVariables: readonly string[];
+}
+
+interface BindingParseContext {
+  readonly env: NodeJS.ProcessEnv;
+  readonly requireCredentials: boolean;
+  readonly missingCredentials: Set<string>;
 }
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
@@ -136,16 +156,20 @@ function apiKeyEnvironmentName(
 }
 
 function apiKeyFromEnvironment(
-  env: NodeJS.ProcessEnv,
+  context: BindingParseContext,
   environmentName: string | undefined,
   path: string,
 ): string | undefined {
   if (!environmentName) return undefined;
-  const value = env[environmentName]?.trim();
+  const value = context.env[environmentName]?.trim();
   if (!value) {
-    return fail(
-      `${path} references missing environment variable ${environmentName}`,
-    );
+    context.missingCredentials.add(environmentName);
+    if (context.requireCredentials) {
+      return fail(
+        `${path} references missing environment variable ${environmentName}`,
+      );
+    }
+    return undefined;
   }
   if (value.length > 2048 || /\s/.test(value)) {
     return fail(
@@ -225,7 +249,7 @@ function parseProviderDefaults(
 function parseVersionOneBindings(
   root: UnknownRecord,
   routing: RoutingConfig,
-  env: NodeJS.ProcessEnv,
+  context: BindingParseContext,
 ): {
   readonly providers: Readonly<Record<string, RoutedProviderConfig>>;
   readonly accounts: Readonly<Record<string, RoutedAccountConfig>>;
@@ -264,7 +288,7 @@ function parseVersionOneBindings(
       `root.providers.${providerId}.apiKeyEnv`,
     );
     const apiKey = apiKeyFromEnvironment(
-      env,
+      context,
       apiKeyEnv,
       `root.providers.${providerId}.apiKeyEnv`,
     );
@@ -295,7 +319,7 @@ function parseVersionOneBindings(
 function parseVersionTwoBindings(
   root: UnknownRecord,
   routing: RoutingConfig,
-  env: NodeJS.ProcessEnv,
+  context: BindingParseContext,
 ): {
   readonly providers: Readonly<Record<string, RoutedProviderConfig>>;
   readonly accounts: Readonly<Record<string, RoutedAccountConfig>>;
@@ -340,7 +364,7 @@ function parseVersionTwoBindings(
         `root.accounts.${accountId}.apiKeyEnv`,
       );
       const apiKey = apiKeyFromEnvironment(
-        env,
+        context,
         apiKeyEnv,
         `root.accounts.${accountId}.apiKeyEnv`,
       );
@@ -373,7 +397,7 @@ function parseVersionTwoBindings(
 function parseBindings(
   source: string,
   routing: RoutingConfig,
-  env: NodeJS.ProcessEnv,
+  context: BindingParseContext,
 ): {
   readonly providers: Readonly<Record<string, RoutedProviderConfig>>;
   readonly accounts: Readonly<Record<string, RoutedAccountConfig>>;
@@ -392,8 +416,8 @@ function parseBindings(
     );
   }
   return routing.version === 1
-    ? parseVersionOneBindings(root, routing, env)
-    : parseVersionTwoBindings(root, routing, env);
+    ? parseVersionOneBindings(root, routing, context)
+    : parseVersionTwoBindings(root, routing, context);
 }
 
 async function readBoundedFile(path: string, label: string): Promise<string> {
@@ -411,6 +435,50 @@ async function readBoundedFile(path: string, label: string): Promise<string> {
   return value;
 }
 
+export function parseGatewayRouterSources(
+  routingSource: string,
+  bindingSource: string,
+  options: ParseGatewayRouterSourcesOptions = {},
+): ParsedGatewayRouterSources {
+  if (Buffer.byteLength(routingSource, 'utf8') > MAX_CONFIG_BYTES) {
+    fail('routing configuration exceeds the 1 MiB safety limit');
+  }
+  if (Buffer.byteLength(bindingSource, 'utf8') > MAX_CONFIG_BYTES) {
+    fail('provider binding configuration exceeds the 1 MiB safety limit');
+  }
+
+  const missingCredentials = new Set<string>();
+  const registry = parseRoutingConfig(routingSource);
+  const bindings = parseBindings(bindingSource, registry, {
+    env: options.env ?? process.env,
+    requireCredentials: options.requireCredentials ?? true,
+    missingCredentials,
+  });
+
+  return Object.freeze({
+    config: Object.freeze({
+      registry,
+      providers: bindings.providers,
+      accounts: bindings.accounts,
+      fallbackPolicy: Object.freeze({
+        maxAttemptsPerRoute: 2,
+        maxTotalAttempts: 4,
+        baseDelayMs: 100,
+        maxDelayMs: 1_000,
+        totalDeadlineMs: 30_000,
+      }),
+      circuitBreaker: Object.freeze({
+        failureThreshold: 3,
+        cooldownMs: 30_000,
+        halfOpenMaxAttempts: 1,
+      }),
+    }),
+    missingCredentialEnvironmentVariables: Object.freeze(
+      [...missingCredentials].sort(),
+    ),
+  });
+}
+
 export async function loadGatewayRouterConfig(
   options: LoadGatewayRouterConfigOptions = {},
 ): Promise<GatewayRouterConfig | undefined> {
@@ -418,8 +486,8 @@ export async function loadGatewayRouterConfig(
   const routingPath = env.TONY_ROUTER_ROUTING_CONFIG_FILE;
   const providersPath = env.TONY_ROUTER_PROVIDER_CONFIG_FILE;
 
-  if (!routingPath && !providersPath) return undefined;
-  if (!routingPath || !providersPath) {
+  if (!options.sources && !routingPath && !providersPath) return undefined;
+  if (!options.sources && (!routingPath || !providersPath)) {
     fail(
       'TONY_ROUTER_ROUTING_CONFIG_FILE and TONY_ROUTER_PROVIDER_CONFIG_FILE must be configured together',
     );
@@ -434,30 +502,24 @@ export async function loadGatewayRouterConfig(
     );
   }
 
-  const [routingSource, bindingSource] = await Promise.all([
-    readBoundedFile(routingPath, 'routing configuration'),
-    readBoundedFile(providersPath, 'provider binding configuration'),
-  ]);
-  const registry = parseRoutingConfig(routingSource);
-  const bindings = parseBindings(bindingSource, registry, env);
+  const sources =
+    options.sources ??
+    Object.freeze({
+      routingSource: await readBoundedFile(
+        routingPath!,
+        'routing configuration',
+      ),
+      bindingSource: await readBoundedFile(
+        providersPath!,
+        'provider binding configuration',
+      ),
+    });
 
-  return Object.freeze({
-    registry,
-    providers: bindings.providers,
-    accounts: bindings.accounts,
-    fallbackPolicy: Object.freeze({
-      maxAttemptsPerRoute: 2,
-      maxTotalAttempts: 4,
-      baseDelayMs: 100,
-      maxDelayMs: 1_000,
-      totalDeadlineMs: 30_000,
-    }),
-    circuitBreaker: Object.freeze({
-      failureThreshold: 3,
-      cooldownMs: 30_000,
-      halfOpenMaxAttempts: 1,
-    }),
-  });
+  return parseGatewayRouterSources(
+    sources.routingSource,
+    sources.bindingSource,
+    { env, requireCredentials: true },
+  ).config;
 }
 
 export function routerSensitiveValues(

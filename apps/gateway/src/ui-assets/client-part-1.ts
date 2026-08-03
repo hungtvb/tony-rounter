@@ -8,6 +8,9 @@ export const UI_JS_PART_1 = String.raw`(() => {
     dashboard: null,
     models: [],
     running: false,
+    generations: [],
+    accountHealth: Object.create(null),
+    healthRunning: Object.create(null),
     currentView: 'dashboard'
   };
 
@@ -54,11 +57,17 @@ export const UI_JS_PART_1 = String.raw`(() => {
     setupUpstreamModel: byId('setupUpstreamModel'),
     setupProfileId: byId('setupProfileId'),
     generateSetupButton: byId('generateSetupButton'),
+    validateSetupButton: byId('validateSetupButton'),
+    applySetupButton: byId('applySetupButton'),
     setupValidation: byId('setupValidation'),
     routingConfigOutput: byId('routingConfigOutput'),
     providerBindingOutput: byId('providerBindingOutput'),
     copyRoutingConfigButton: byId('copyRoutingConfigButton'),
     copyProviderBindingButton: byId('copyProviderBindingButton'),
+    setupNextStepText: byId('setupNextStepText'),
+    controlModeBadge: byId('controlModeBadge'),
+    controlStateText: byId('controlStateText'),
+    generationList: byId('generationList'),
     recentRequestList: byId('recentRequestList'),
     quickModelBadge: byId('quickModelBadge'),
     modelCountLabel: byId('modelCountLabel'),

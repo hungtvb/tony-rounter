@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Implementation note (2026-08-03):** The repository has already delivered multi-provider routed runtime, first-class provider accounts, and a local web control plane ahead of the original phase numbering below. Treat current code, tests, and active GitHub issues as authoritative; this document remains the long-range protocol/desktop roadmap.
+> **Implementation note (2026-08-03):** The repository has delivered multi-provider routed runtime, first-class provider accounts, a local provider-first web control plane, atomic managed-config generations with rollback, and bounded account health probes ahead of the original phase numbering below. Treat current code, tests, and active GitHub issues as authoritative; this document remains the long-range protocol/desktop roadmap.
 
 ## Delivery strategy
 
@@ -104,6 +104,8 @@ Build the smallest verifiable routing core first. Each phase should end with exe
 - a new user can initialize, validate, and run a gateway without editing generated secrets manually.
 
 ## Phase 7 — Desktop control plane
+
+The loopback web control plane now covers provider inventory, environment-only setup, atomic config apply/rollback, and account health probes. The remaining desktop phase includes:
 
 - Tauri desktop shell;
 - provider/account setup;

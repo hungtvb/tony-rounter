@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 
+import type { LocalConfigStore } from './control/config-store.js';
 import type { GatewayRouterConfig } from './routing/config.js';
 import type { GatewayTelemetry } from './telemetry.js';
 import { UI_JS } from './ui-assets/client.js';
@@ -43,6 +44,14 @@ export interface UiRoutingInventory {
   readonly profiles: readonly UiProfileInventoryItem[];
 }
 
+export interface UiControlInfo {
+  readonly enabled: boolean;
+  readonly status: 'disabled' | 'empty' | 'ready' | 'unavailable';
+  readonly restartRequired: boolean;
+  readonly generationCount: number;
+  readonly activeGenerationId?: string;
+}
+
 export interface UiRuntimeInfo {
   readonly version: string;
   readonly host: string;
@@ -61,6 +70,7 @@ export interface UiRuntimeInfo {
 export interface InstallUiRoutesOptions {
   readonly telemetry: GatewayTelemetry;
   readonly runtime: UiRuntimeInfo;
+  readonly controlStore?: LocalConfigStore;
 }
 
 function distinctCount(values: readonly string[]): number {
@@ -143,6 +153,37 @@ export function buildUiRoutingInventory(
   });
 }
 
+async function controlSnapshot(
+  store: LocalConfigStore | undefined,
+): Promise<UiControlInfo> {
+  if (!store) {
+    return Object.freeze({
+      enabled: false,
+      status: 'disabled',
+      restartRequired: false,
+      generationCount: 0,
+    });
+  }
+  try {
+    const generations = await store.listGenerations();
+    const active = generations.find((generation) => generation.active);
+    return Object.freeze({
+      enabled: true,
+      status: active ? 'ready' : 'empty',
+      restartRequired: store.restartRequired,
+      generationCount: generations.length,
+      ...(active ? { activeGenerationId: active.generationId } : {}),
+    });
+  } catch {
+    return Object.freeze({
+      enabled: true,
+      status: 'unavailable',
+      restartRequired: store.restartRequired,
+      generationCount: 0,
+    });
+  }
+}
+
 function secureUiHeaders(reply: FastifyReply): void {
   reply.header(
     'content-security-policy',
@@ -180,7 +221,7 @@ export function installUiRoutes(
     return reply.type('text/javascript; charset=utf-8').send(UI_JS);
   });
 
-  app.get('/ui/api/dashboard', () => ({
+  app.get('/ui/api/dashboard', async () => ({
     gateway: {
       version: options.runtime.version,
       host: options.runtime.host,
@@ -189,6 +230,7 @@ export function installUiRoutes(
     },
     provider: options.runtime.provider,
     ...(options.runtime.routing ? { routing: options.runtime.routing } : {}),
+    control: await controlSnapshot(options.controlStore),
     telemetry: options.telemetry.snapshot(),
   }));
 }

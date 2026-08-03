@@ -40,11 +40,27 @@ export const UI_JS_PROVIDERS = String.raw`
     models.textContent = account.modelCount + (account.modelCount === 1 ? ' model' : ' models');
     facts.append(models, routes, timeout);
 
-    const status = document.createElement('span');
-    status.className = 'health-badge ' + (account.credentialConfigured ? '' : 'is-muted');
-    status.textContent = account.credentialConfigured ? 'Key loaded' : 'No key loaded';
+    const actions = document.createElement('div');
+    actions.className = 'provider-account-actions';
+    const credential = document.createElement('span');
+    credential.className = 'health-badge ' + (account.credentialConfigured ? '' : 'is-muted');
+    credential.textContent = account.credentialConfigured ? 'Key loaded' : 'No key loaded';
+    const probe = state.accountHealth[account.id];
+    const running = Boolean(state.healthRunning[account.id]);
+    const probeButton = document.createElement('button');
+    probeButton.className = 'button button-secondary account-health-button';
+    probeButton.type = 'button';
+    probeButton.dataset.healthAccount = account.id;
+    probeButton.disabled = running || !state.dashboard || state.dashboard.provider.mode !== 'routed';
+    probeButton.textContent = running
+      ? 'Testing…'
+      : probe
+        ? probe.status.replace(/_/g, ' ') + ' · ' + probe.latencyMs + ' ms'
+        : 'Test health';
+    if (probe) probeButton.dataset.healthStatus = probe.status;
+    actions.append(credential, probeButton);
 
-    row.append(identity, facts, status);
+    row.append(identity, facts, actions);
     return row;
   }
 
@@ -122,6 +138,7 @@ export const UI_JS_PROVIDERS = String.raw`
 
     elements.providerInventory.replaceChildren();
     elements.profileInventory.replaceChildren();
+    renderControlState();
     if (!dashboard) {
       elements.providerPageProviderCount.textContent = '0';
       elements.providerPageAccountCount.textContent = '0';
@@ -318,6 +335,192 @@ export const UI_JS_PROVIDERS = String.raw`
       elements.setupValidation.className = 'setup-validation is-error';
       elements.setupValidation.textContent = messageOf(error);
       return false;
+    }
+  }
+
+  function controlRequest(path, options) {
+    const request = Object.assign({}, options || {});
+    request.cache = 'no-store';
+    request.headers = authHeaders(Object.assign(request.body ? { 'content-type': 'application/json' } : {}, request.headers || {}));
+    return fetch(path, request).then(async (response) => {
+      if (!response.ok) throw new Error(await responseError(response));
+      return response.json();
+    });
+  }
+
+  function generatedSources() {
+    if (!generateSetupConfiguration()) return null;
+    return {
+      routingSource: elements.routingConfigOutput.textContent || '',
+      bindingSource: elements.providerBindingOutput.textContent || ''
+    };
+  }
+
+  function setSetupStatus(mode, message) {
+    elements.setupValidation.className = 'setup-validation ' + (mode ? 'is-' + mode : '');
+    elements.setupValidation.textContent = message;
+  }
+
+  async function validateSetupLocally() {
+    const sources = generatedSources();
+    if (!sources) return;
+    elements.validateSetupButton.disabled = true;
+    try {
+      const body = await controlRequest('/ui/api/control/validate', {
+        method: 'POST',
+        body: JSON.stringify(sources)
+      });
+      const validation = body.validation;
+      const missing = validation.missingCredentialEnvironmentVariables || [];
+      setSetupStatus(
+        missing.length ? 'error' : 'success',
+        'Valid routing v' + validation.routingVersion + ': ' + validation.providerCount + ' provider, ' + validation.accountCount + ' account, ' + validation.routeCount + ' route.' +
+          (missing.length ? ' Export before restart: ' + missing.join(', ') + '.' : ' Credentials are available for restart.')
+      );
+    } catch (error) {
+      setSetupStatus('error', messageOf(error));
+    } finally {
+      elements.validateSetupButton.disabled = false;
+    }
+  }
+
+  async function applySetupLocally() {
+    const sources = generatedSources();
+    if (!sources) return;
+    if (!window.confirm('Validate and atomically apply this configuration? The active generation remains available for rollback.')) return;
+    elements.applySetupButton.disabled = true;
+    try {
+      const body = await controlRequest('/ui/api/control/apply', {
+        method: 'POST',
+        body: JSON.stringify(sources)
+      });
+      const result = body.result;
+      setSetupStatus(
+        'success',
+        result.changed
+          ? 'Configuration applied as ' + result.generation.generationId + '. Export the named key and restart Tony Router.'
+          : 'This exact configuration is already active.'
+      );
+      await loadDashboard();
+      await loadControlGenerations();
+    } catch (error) {
+      setSetupStatus('error', messageOf(error));
+    } finally {
+      elements.applySetupButton.disabled = false;
+    }
+  }
+
+  function generationRow(generation) {
+    const row = document.createElement('div');
+    row.className = 'generation-row' + (generation.active ? ' is-active' : '');
+    const copy = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = generation.active ? 'Active generation' : 'Backup generation';
+    const detail = document.createElement('small');
+    detail.textContent = generation.generationId + ' · routing v' + generation.routingVersion + ' · ' + relativeTime(generation.createdAt);
+    copy.append(title, detail);
+    const status = document.createElement('span');
+    status.className = 'health-badge ' + (generation.restartReady ? '' : 'is-muted');
+    status.textContent = generation.restartReady ? 'Restart ready' : 'Missing env';
+    row.append(copy, status);
+    if (!generation.active) {
+      const button = document.createElement('button');
+      button.className = 'button button-secondary generation-rollback-button';
+      button.type = 'button';
+      button.dataset.rollbackGeneration = generation.generationId;
+      button.textContent = 'Rollback';
+      row.append(button);
+    }
+    return row;
+  }
+
+  function renderControlState() {
+    const control = state.dashboard && state.dashboard.control;
+    elements.generationList.replaceChildren();
+    const enabled = Boolean(control && control.enabled);
+    elements.validateSetupButton.disabled = !enabled;
+    elements.applySetupButton.disabled = !enabled;
+    if (!state.dashboard) {
+      elements.controlModeBadge.className = 'health-badge is-muted';
+      elements.controlModeBadge.textContent = 'Locked';
+      elements.controlStateText.textContent = 'Connect to inspect local configuration control.';
+      elements.generationList.append(emptyState('Connect to inspect generations', 'Applied configuration history is bearer-protected.'));
+      return;
+    }
+    if (!enabled) {
+      elements.controlModeBadge.className = 'health-badge is-muted';
+      elements.controlModeBadge.textContent = 'Disabled';
+      elements.controlStateText.textContent = 'Set TONY_ROUTER_CONTROL_DIR on loopback to enable atomic apply and rollback.';
+      elements.setupNextStepText.textContent = 'Save both files, export the named key, set the two routed config file paths, then restart the gateway.';
+      elements.generationList.append(emptyState('Local control disabled', 'Generated files can still be copied and applied manually.'));
+      return;
+    }
+    elements.controlModeBadge.className = 'health-badge ' + (control.status === 'unavailable' ? 'is-muted' : '');
+    elements.controlModeBadge.textContent = control.restartRequired ? 'Restart required' : control.status;
+    elements.controlStateText.textContent = control.restartRequired
+      ? 'A validated generation is active on disk. Restart Tony Router to load it.'
+      : 'Atomic apply and rollback are enabled for this loopback gateway.';
+    elements.setupNextStepText.textContent = 'Apply writes an immutable generation and switches one atomic pointer. Export the named key, then restart Tony Router.';
+    if (!state.generations.length) {
+      elements.generationList.append(emptyState('No applied generations', 'Generate, validate, and apply a configuration to create the first recoverable generation.'));
+      return;
+    }
+    state.generations.forEach((generation) => elements.generationList.append(generationRow(generation)));
+  }
+
+  async function loadControlGenerations() {
+    const control = state.dashboard && state.dashboard.control;
+    if (!control || !control.enabled) {
+      state.generations = [];
+      renderControlState();
+      return false;
+    }
+    try {
+      const body = await controlRequest('/ui/api/control/generations', { method: 'GET', headers: {} });
+      state.generations = Array.isArray(body.generations) ? body.generations : [];
+      renderControlState();
+      return true;
+    } catch (error) {
+      state.generations = [];
+      renderControlState();
+      toast(messageOf(error));
+      return false;
+    }
+  }
+
+  async function rollbackGeneration(button) {
+    const generationId = button.dataset.rollbackGeneration || '';
+    if (!generationId || !window.confirm('Rollback the active pointer to this generation? A gateway restart is still required.')) return;
+    button.disabled = true;
+    try {
+      const body = await controlRequest('/ui/api/control/rollback', {
+        method: 'POST',
+        body: JSON.stringify({ generationId })
+      });
+      toast(body.result.changed ? 'Rollback selected. Restart Tony Router.' : 'Generation is already active.');
+      await loadDashboard();
+      await loadControlGenerations();
+    } catch (error) {
+      toast(messageOf(error));
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function probeAccount(button) {
+    const accountId = button.dataset.healthAccount || '';
+    if (!accountId || state.healthRunning[accountId]) return;
+    state.healthRunning[accountId] = true;
+    renderProviders();
+    try {
+      const body = await controlRequest('/ui/api/providers/' + encodeURIComponent(accountId) + '/health', { method: 'POST', body: '{}' });
+      state.accountHealth[accountId] = body.probe;
+      toast(accountId + ': ' + body.probe.status.replace(/_/g, ' ') + ' in ' + body.probe.latencyMs + ' ms');
+    } catch (error) {
+      toast(messageOf(error));
+    } finally {
+      delete state.healthRunning[accountId];
+      renderProviders();
     }
   }
 
