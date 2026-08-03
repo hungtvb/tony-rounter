@@ -96,7 +96,7 @@ describe('prepareResponsesTextStream', () => {
 
   it('emits one terminal error event when upstream fails after output', async () => {
     const upstream = Readable.from(
-      (async function* (): AsyncGenerator<string> {
+      (function* (): Generator<string> {
         yield event(chunk('partial'));
         yield event('{"broken":');
       })(),
