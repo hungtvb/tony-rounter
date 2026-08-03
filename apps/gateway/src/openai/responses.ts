@@ -5,7 +5,7 @@ export interface ResponsesRequest extends Readonly<Record<string, unknown>> {
   readonly model: string;
   readonly input: string | readonly unknown[];
   readonly instructions?: string;
-  readonly stream?: false;
+  readonly stream?: boolean;
   readonly max_output_tokens?: number;
   readonly temperature?: number;
   readonly top_p?: number;
@@ -197,6 +197,20 @@ function validateDisabledFeature(
   unsupported(`${name}: true is not implemented in this phase`);
 }
 
+function validateStreamingToolBoundary(value: JsonRecord): void {
+  if (value.stream !== true) return;
+  if (Array.isArray(value.tools) && value.tools.length > 0) {
+    unsupported('streaming function tools are not implemented in this phase');
+  }
+  if (
+    value.tool_choice !== undefined &&
+    value.tool_choice !== 'none' &&
+    value.tool_choice !== 'auto'
+  ) {
+    unsupported('streaming named or required tool choice is not implemented');
+  }
+}
+
 export function parseResponsesRequest(value: unknown): ResponsesRequest {
   if (!isRecord(value)) return invalid('Request body must be a JSON object');
   if (typeof value.model !== 'string' || value.model.trim().length === 0) {
@@ -209,12 +223,7 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
   ) {
     return invalid('instructions must be a string when provided');
   }
-  if (value.stream === true) {
-    return unsupported(
-      'streaming Responses API is not implemented in this phase',
-    );
-  }
-  if (value.stream !== undefined && value.stream !== false) {
+  if (value.stream !== undefined && typeof value.stream !== 'boolean') {
     return invalid('stream must be a boolean when provided');
   }
   if (value.previous_response_id !== undefined) {
@@ -235,6 +244,7 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
   }
   if (value.tools !== undefined) translateTools(value.tools);
   if (value.tool_choice !== undefined) translateToolChoice(value.tool_choice);
+  validateStreamingToolBoundary(value);
 
   return value as ResponsesRequest;
 }
@@ -248,10 +258,12 @@ export function responsesToChatCompletion(
   }
   messages.push(...responseInputMessages(request.input));
 
+  const streaming = request.stream === true;
   const translated: Record<string, unknown> = {
     model: request.model,
     messages,
-    stream: false,
+    stream: streaming,
+    ...(streaming ? { stream_options: { include_usage: true } } : {}),
   };
   if (request.max_output_tokens !== undefined) {
     translated.max_completion_tokens = request.max_output_tokens;
