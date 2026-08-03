@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Implementation note (2026-08-03):** The repository has delivered multi-provider routed runtime, first-class provider accounts, a local provider-first web control plane, atomic managed-config generations with rollback, bounded account health probes, and the first non-streaming OpenAI Responses compatibility slice ahead of the original phase numbering below. Treat current code, tests, and active GitHub issues as authoritative; this document remains the long-range protocol/desktop roadmap.
+> **Implementation note (2026-08-03):** The repository has delivered multi-provider routed runtime, first-class provider accounts, a local provider-first web control plane, atomic managed-config generations with rollback, bounded account health probes, and text JSON/SSE OpenAI Responses compatibility ahead of the original phase numbering below. Treat current code, tests, and active GitHub issues as authoritative; this document remains the long-range protocol/desktop roadmap.
 
 ## Delivery strategy
 
@@ -66,18 +66,22 @@ Build the smallest verifiable routing core first. Each phase should end with exe
 
 ## Phase 4 — OpenAI Responses API
 
-Delivered initial slice:
+Delivered text compatibility slices:
 
 - authenticated non-streaming `/v1/responses` request parsing;
 - text message and instruction translation through the existing routed Chat Completions runtime;
-- function tool and named tool-choice mapping;
+- non-streaming function tool and named tool-choice mapping;
 - response text, function-call, usage, and public-model normalization;
-- explicit rejection of unsupported streaming, image, hosted-tool, stored, background, and chained-response features;
-- gateway contracts for authentication, missing provider, successful translation, and upstream protocol mismatch.
+- text-only `stream: true` translation into ordered Responses lifecycle events;
+- monotonic sequence numbers, terminal usage, and no exposed Chat Completions `[DONE]` sentinel;
+- fallback allowed only before output, with routed identity headers preserved;
+- downstream disconnect propagation and terminal post-emission `error` events;
+- explicit rejection of unsupported streaming tools, image, hosted-tool, stored, background, and chained-response features;
+- gateway contracts for authentication, missing provider, JSON/SSE translation, routed fallback, no post-output replay, disconnect, malformed streams, and protocol mismatch.
 
 Remaining:
 
-- Responses SSE event stream;
+- streaming function-call arguments and output items;
 - image input and capability-preserving multimodal mapping;
 - structured-output validation and compatibility matrix;
 - additional Codex-style fixtures;
@@ -87,6 +91,7 @@ Remaining:
 
 - Codex-style Responses API fixtures pass through the gateway;
 - tool calls and usage remain protocol-correct;
+- streaming event order and terminal semantics remain deterministic;
 - unsupported feature downgrade requires explicit policy rather than silent omission.
 
 ## Phase 5 — Multiple providers
