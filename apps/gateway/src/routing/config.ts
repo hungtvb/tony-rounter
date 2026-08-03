@@ -331,7 +331,9 @@ function parseVersionTwoBindings(
       }
       const provider = providers[providerId];
       if (!provider) {
-        fail(`root.accounts.${accountId} references missing provider ${providerId}`);
+        fail(
+          `root.accounts.${accountId} references missing provider ${providerId}`,
+        );
       }
       const apiKeyEnv = apiKeyEnvironmentName(
         account.apiKeyEnv,
@@ -385,7 +387,9 @@ function parseBindings(
 
   const root = record(parsed, 'root');
   if (root.version !== routing.version) {
-    fail(`root.version must equal routing configuration version ${routing.version}`);
+    fail(
+      `root.version must equal routing configuration version ${routing.version}`,
+    );
   }
   return routing.version === 1
     ? parseVersionOneBindings(root, routing, env)
@@ -461,7 +465,9 @@ export function routerSensitiveValues(
 ): readonly string[] {
   return Object.freeze(
     [
-      ...Object.values(config?.providers ?? {}).map((provider) => provider.apiKey),
+      ...Object.values(config?.providers ?? {}).map(
+        (provider) => provider.apiKey,
+      ),
       ...Object.values(config?.accounts ?? {}).map((account) => account.apiKey),
     ].filter((value): value is string => value !== undefined),
   );

@@ -68,10 +68,9 @@ describe('provider accounts routing schema', () => {
       modelId: 'gpt',
       upstreamModel: 'gpt-5',
     });
-    expect(decision.candidates.map((candidate) => candidate.accountId)).toEqual([
-      'personal',
-      'work',
-    ]);
+    expect(decision.candidates.map((candidate) => candidate.accountId)).toEqual(
+      ['personal', 'work'],
+    );
   });
 
   it('normalizes version 1 providers into implicit same-ID accounts', () => {
@@ -115,12 +114,16 @@ profiles:
           'providers:\n  openai:\n    kind: openai-compatible\n  other:\n    kind: openai-compatible',
         ).replace('work:\n    provider: openai', 'work:\n    provider: other'),
       ),
-    ).toThrow(/belongs to provider other.*model gpt belongs to provider openai/);
+    ).toThrow(
+      /belongs to provider other.*model gpt belongs to provider openai/,
+    );
   });
 
   it('requires explicit accounts and route account references in version 2', () => {
     expect(() =>
-      parseRoutingConfig(VERSION_TWO.replace(/accounts:[\s\S]*?models:/, 'models:')),
+      parseRoutingConfig(
+        VERSION_TWO.replace(/accounts:[\s\S]*?models:/, 'models:'),
+      ),
     ).toThrow(/accounts/);
     expect(() =>
       parseRoutingConfig(VERSION_TWO.replace('    account: personal\n', '')),

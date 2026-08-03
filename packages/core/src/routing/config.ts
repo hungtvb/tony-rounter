@@ -174,10 +174,13 @@ function implicitAccounts(
   providers: Readonly<Record<string, RoutingProvider>>,
 ): Readonly<Record<string, RoutingAccount>> {
   return frozenRecord(
-    Object.values(providers).map((provider) => [
-      provider.id,
-      Object.freeze({ id: provider.id, providerId: provider.id }),
-    ] as const),
+    Object.values(providers).map(
+      (provider) =>
+        [
+          provider.id,
+          Object.freeze({ id: provider.id, providerId: provider.id }),
+        ] as const,
+    ),
   );
 }
 
@@ -200,10 +203,7 @@ function parseAccounts(
         id,
         Object.freeze({
           id,
-          providerId: identifier(
-            account.provider,
-            `accounts.${id}.provider`,
-          ),
+          providerId: identifier(account.provider, `accounts.${id}.provider`),
         }),
       ] as const;
     }),
@@ -458,7 +458,14 @@ export function parseRoutingConfig(source: string): RoutingConfig {
   allowedKeys(
     root,
     version === 1
-      ? ['version', 'defaultProfile', 'providers', 'models', 'routes', 'profiles']
+      ? [
+          'version',
+          'defaultProfile',
+          'providers',
+          'models',
+          'routes',
+          'profiles',
+        ]
       : [
           'version',
           'defaultProfile',
