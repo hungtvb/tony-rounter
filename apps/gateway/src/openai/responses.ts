@@ -203,8 +203,16 @@ export function chatCompletionToResponse(
   requestedModel: string,
 ): Readonly<Record<string, unknown>> {
   const choices = Array.isArray(value.choices) ? value.choices : [];
-  const first = choices[0];
-  if (!isRecord(first) || !isRecord(first.message)) {
+  const first: unknown = choices[0];
+  if (!isRecord(first)) {
+    throw new GatewayHttpError(
+      502,
+      'upstream_invalid_response',
+      'Upstream returned no response message',
+    );
+  }
+  const rawMessage: unknown = first.message;
+  if (!isRecord(rawMessage)) {
     throw new GatewayHttpError(
       502,
       'upstream_invalid_response',
@@ -212,7 +220,7 @@ export function chatCompletionToResponse(
     );
   }
 
-  const message = first.message;
+  const message = rawMessage;
   const output: JsonRecord[] = [];
   if (typeof message.content === 'string') {
     output.push({
