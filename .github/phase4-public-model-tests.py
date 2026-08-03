@@ -38,9 +38,13 @@ new = """  async createChatCompletion(
   }"""
 assert text.count(old) == 1
 text = text.replace(old, new, 1)
-old = "    expect(response.body).not.toContain('backup-upstream');\n"
+old = """    expect(response.json()).toMatchObject({ model: 'tony-auto' });
+    expect(response.body).not.toContain('backup-upstream');
+    expect(primary.requests[0]?.model).toBe('primary-upstream');"""
+new = """    expect(response.json()).toMatchObject({ model: 'tony-auto' });
+    expect(primary.requests[0]?.model).toBe('primary-upstream');"""
 assert text.count(old) == 1
-routed.write_text(text.replace(old, '', 1))
+routed.write_text(text.replace(old, new, 1))
 
 core = Path('apps/gateway/test/openai-core.test.ts')
 text = core.read_text()
