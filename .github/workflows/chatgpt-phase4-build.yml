@@ -52,6 +52,16 @@ jobs:
             apps/gateway/test/routed-gateway.test.ts \
             docs/multi-provider-gateway.md
 
+      - name: Configure intentional async test doubles
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=apps/gateway/test/routed-gateway.test.ts
+          temporary=$(mktemp)
+          printf '%s\n\n' '/* eslint-disable @typescript-eslint/require-await -- provider doubles intentionally implement asynchronous interfaces */' > "$temporary"
+          cat "$file" >> "$temporary"
+          mv "$temporary" "$file"
+
       - name: Install and update workspace lockfile
         run: pnpm install --no-frozen-lockfile
 
