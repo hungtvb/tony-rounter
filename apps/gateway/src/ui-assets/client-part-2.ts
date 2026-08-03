@@ -19,6 +19,7 @@ export const UI_JS_PART_2 = String.raw`    const minutes = Math.floor((seconds %
   function providerLabel(runtime) {
     const provider = runtime && runtime.provider;
     if (!provider) return 'Not configured';
+    if (provider.mode === 'routed') return (provider.providerCount || 0) + ' routed providers';
     if (provider.mode === 'static-registry') return 'Static model registry';
     if (provider.baseUrl) {
       try { return new URL(provider.baseUrl).hostname; } catch (_) { return 'OpenAI-compatible'; }
@@ -60,14 +61,15 @@ export const UI_JS_PART_2 = String.raw`    const minutes = Math.floor((seconds %
     const connected = Boolean(state.dashboard);
     const configured = Boolean(provider && provider.mode !== 'unconfigured');
     const label = providerLabel(state.dashboard);
+    const providerCount = provider && provider.providerCount ? provider.providerCount : (configured ? 1 : 0);
 
-    elements.providerMetric.textContent = connected ? (configured ? '1 / 1' : '0 / 1') : 'Locked';
+    elements.providerMetric.textContent = connected ? providerCount + ' / ' + providerCount : 'Locked';
     elements.providerDetail.textContent = connected
       ? (configured ? 'Provider configured' : 'No upstream configured')
       : 'Connect with your local token';
     elements.providerName.textContent = connected ? label : 'Not connected';
     elements.providerBaseUrl.textContent = connected
-      ? (provider.baseUrl || (provider.mode === 'static-registry' ? 'Local static registry' : 'No upstream URL'))
+      ? (provider.baseUrl || (provider.mode === 'routed' ? 'Managed by routing registry' : provider.mode === 'static-registry' ? 'Local static registry' : 'No upstream URL'))
       : 'Protected runtime data is locked';
     elements.providerLogo.textContent = connected ? modelInitials(label) : 'AI';
     elements.providerHealth.className = 'health-badge ' + (!connected ? 'is-muted' : configured ? '' : 'is-error');
@@ -82,7 +84,7 @@ export const UI_JS_PART_2 = String.raw`    const minutes = Math.floor((seconds %
       ? 'Connect to inspect provider status'
       : configured
         ? 'Provider metadata is available'
-        : 'Configure an upstream or static registry';
+        : 'Configure a routed provider, upstream, or static registry';
 
     if (runtime) {
       elements.footerAddress.textContent = runtime.host + ':' + runtime.port;

@@ -23,6 +23,7 @@ const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
 export interface ProviderRequestContext {
   readonly requestId: string;
   readonly signal: AbortSignal;
+  readonly publicModel?: string;
 }
 
 export type ChatCompletionResult =
@@ -299,6 +300,7 @@ async function upstreamFailure(
 function canonicalEvents(
   dataEvents: readonly string[],
   state: { done: boolean },
+  requestedModel: string,
 ): readonly CanonicalSseEvent[] {
   const output: CanonicalSseEvent[] = [];
   for (const data of dataEvents) {
@@ -309,7 +311,7 @@ function canonicalEvents(
         'Upstream emitted data after the terminal event',
       );
     }
-    const event = canonicalizeChatSseData(data);
+    const event = canonicalizeChatSseData(data, requestedModel);
     state.done = event.done;
     output.push(event);
   }
@@ -320,6 +322,7 @@ async function prepareStreamingBody(
   response: Response,
   context: ProviderRequestContext,
   scope: AbortScope,
+  responseModel: string,
 ): Promise<Readable> {
   const contentType = response.headers.get('content-type') ?? '';
   if (!contentType.toLowerCase().includes('text/event-stream')) {
@@ -348,7 +351,7 @@ async function prepareStreamingBody(
     while (initialEvents.length === 0) {
       const chunk = await reader.read();
       if (chunk.done) {
-        initialEvents = canonicalEvents(decoder.finish(), state);
+        initialEvents = canonicalEvents(decoder.finish(), state, responseModel);
         if (initialEvents.length === 0 || !state.done) {
           throw new GatewayHttpError(
             502,
@@ -362,6 +365,7 @@ async function prepareStreamingBody(
       initialEvents = canonicalEvents(
         decoder.push(byteChunk(chunk.value)),
         state,
+        responseModel,
       );
     }
   } catch (error) {
@@ -381,7 +385,11 @@ async function prepareStreamingBody(
       while (!state.done) {
         const chunk = await reader.read();
         if (chunk.done) {
-          const finalEvents = canonicalEvents(decoder.finish(), state);
+          const finalEvents = canonicalEvents(
+            decoder.finish(),
+            state,
+            responseModel,
+          );
           for (const event of finalEvents) {
             emitted = true;
             yield event.wire;
@@ -400,6 +408,7 @@ async function prepareStreamingBody(
         for (const event of canonicalEvents(
           decoder.push(byteChunk(chunk.value)),
           state,
+          responseModel,
         )) {
           emitted = true;
           yield event.wire;
@@ -490,6 +499,7 @@ export class OpenAICompatibleClient implements OpenAICompatibleProvider {
     });
 
     try {
+      const responseModel = context.publicModel ?? request.model;
       const response = await fetch(
         endpoint(this.config.baseUrl, 'chat/completions'),
         {
@@ -508,7 +518,12 @@ export class OpenAICompatibleClient implements OpenAICompatibleProvider {
       }
 
       if (request.stream === true) {
-        const body = await prepareStreamingBody(response, context, scope);
+        const body = await prepareStreamingBody(
+          response,
+          context,
+          scope,
+          responseModel,
+        );
         this.logger.info('upstream_stream_started', {
           requestId: context.requestId,
           operation: 'chat_completions',
@@ -525,7 +540,7 @@ export class OpenAICompatibleClient implements OpenAICompatibleProvider {
       );
       const body = normalizeChatCompletionResponse(
         parseJson(text, 'Upstream returned malformed chat completion JSON'),
-        request.model,
+        responseModel,
       );
       this.logger.info('upstream_request_completed', {
         requestId: context.requestId,

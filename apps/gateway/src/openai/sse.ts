@@ -81,7 +81,10 @@ export class OpenAISseDecoder {
   }
 }
 
-export function canonicalizeChatSseData(data: string): CanonicalSseEvent {
+export function canonicalizeChatSseData(
+  data: string,
+  requestedModel?: string,
+): CanonicalSseEvent {
   if (data.trim() === '[DONE]') {
     return { wire: 'data: [DONE]\n\n', done: true };
   }
@@ -97,7 +100,7 @@ export function canonicalizeChatSseData(data: string): CanonicalSseEvent {
     );
   }
 
-  const chunk = normalizeChatCompletionChunk(parsed);
+  const chunk = normalizeChatCompletionChunk(parsed, requestedModel);
   return {
     wire: `data: ${JSON.stringify(chunk)}\n\n`,
     done: false,

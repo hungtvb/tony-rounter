@@ -29,6 +29,9 @@ importers:
 
   apps/gateway:
     dependencies:
+      '@tony-router/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       fastify:
         specifier: 5.10.0
         version: 5.10.0

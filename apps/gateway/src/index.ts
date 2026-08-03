@@ -26,6 +26,22 @@ export type {
   CanonicalModelList,
   ChatCompletionRequest,
 } from './openai/protocol.js';
+export {
+  GatewayRouterConfigError,
+  loadGatewayRouterConfig,
+  routerSensitiveValues,
+} from './routing/config.js';
+export type {
+  GatewayRouterConfig,
+  LoadGatewayRouterConfigOptions,
+  RoutedProviderConfig,
+} from './routing/config.js';
+export { RoutedOpenAIProvider } from './routing/provider.js';
+export type {
+  RoutedChatCompletionResult,
+  RoutedChatRequestContext,
+  RoutedOpenAIProviderOptions,
+} from './routing/provider.js';
 export { createGracefulShutdown, installSignalHandlers } from './shutdown.js';
 export type { ShutdownResult } from './shutdown.js';
 
