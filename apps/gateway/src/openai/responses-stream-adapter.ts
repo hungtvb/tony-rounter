@@ -3,8 +3,8 @@ import { Readable } from 'node:stream';
 import { GatewayHttpError } from '../errors.js';
 import { OpenAISseDecoder } from './sse.js';
 import {
-  ResponsesTextStreamEncoder,
-  type ResponsesTextStreamOptions,
+  ResponsesStreamEncoder,
+  type ResponsesStreamOptions,
 } from './responses-stream.js';
 
 function byteChunk(value: unknown): Uint8Array {
@@ -38,7 +38,7 @@ function errorWire(sequenceNumber: number, error: GatewayHttpError): string {
 
 function encodeDataEvents(
   decoder: OpenAISseDecoder,
-  encoder: ResponsesTextStreamEncoder,
+  encoder: ResponsesStreamEncoder,
   chunk: unknown,
 ): readonly string[] {
   return decoder.push(byteChunk(chunk)).flatMap((data) => encoder.push(data));
@@ -46,7 +46,7 @@ function encodeDataEvents(
 
 function finishEvents(
   decoder: OpenAISseDecoder,
-  encoder: ResponsesTextStreamEncoder,
+  encoder: ResponsesStreamEncoder,
 ): readonly string[] {
   const wires = decoder.finish().flatMap((data) => encoder.push(data));
   encoder.end();
@@ -58,14 +58,14 @@ async function closeIterator(iterator: AsyncIterator<unknown>): Promise<void> {
   await iterator.return().catch(() => undefined);
 }
 
-export async function prepareResponsesTextStream(
+export async function prepareResponsesStream(
   upstream: Readable,
-  options: ResponsesTextStreamOptions,
+  options: ResponsesStreamOptions,
 ): Promise<Readable> {
   const source: AsyncIterable<unknown> = upstream;
   const iterator = source[Symbol.asyncIterator]();
   const decoder = new OpenAISseDecoder();
-  const encoder = new ResponsesTextStreamEncoder(options);
+  const encoder = new ResponsesStreamEncoder(options);
   let initialWires: readonly string[] = [];
   let upstreamDone = false;
 

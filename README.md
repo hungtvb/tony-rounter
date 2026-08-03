@@ -12,7 +12,7 @@ Implemented and verified:
 - generated local bearer token and redacted JSON logs
 - authenticated `GET /v1/models`
 - authenticated `POST /v1/chat/completions`
-- authenticated `POST /v1/responses` compatibility for text input, non-streaming function tools, and text-only SSE streaming
+- authenticated `POST /v1/responses` compatibility for text input and custom function tools across JSON and SSE streaming
 - non-streaming and validated SSE streaming proxy for Chat Completions
 - upstream timeout, disconnect propagation, redirect rejection, and normalized errors
 - versioned YAML routing registry
@@ -26,9 +26,9 @@ Implemented and verified:
 - optional loopback-only managed config generations with atomic apply, hash-verified rollback, and restart-required state
 - bounded per-account health probes that return status categories and latency without raw provider responses
 
-The Responses compatibility layer translates supported requests through the same routed Chat Completions runtime, preserving public model IDs and route/provider/account headers. Text streams are emitted as ordered Responses lifecycle events with monotonic sequence numbers; malformed or truncated upstream data after output becomes a terminal `error` event and never triggers fallback after emission.
+The Responses compatibility layer translates supported requests through the same routed Chat Completions runtime, preserving public model IDs and route/provider/account headers. Text and custom function-call streams are emitted as ordered Responses lifecycle events with monotonic sequence numbers. Function argument deltas are aggregated exactly into completed output items; malformed or truncated upstream data after output becomes a terminal `error` event and never triggers fallback after emission.
 
-Streaming function calls, image input, hosted tools, background execution, stored responses, and response chaining are rejected explicitly until their protocol and ownership boundaries are implemented. Non-streaming function tools remain supported.
+Image input, hosted tools, refusal/reasoning events, background execution, stored responses, function-output submission, and response chaining are rejected explicitly until their protocol and ownership boundaries are implemented.
 
 The routing engine lives in `@tony-router/core`; the Fastify gateway wires profiles to provider accounts and keeps public model IDs stable across JSON and SSE responses.
 
@@ -75,7 +75,20 @@ curl --no-buffer http://127.0.0.1:8787/v1/responses \
   -d '{
     "model": "gpt-4.1-mini",
     "instructions": "Be concise.",
-    "input": "Hello",
+    "input": "Write hello.txt.",
+    "tools": [{
+      "type": "function",
+      "name": "write_file",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"},
+          "content": {"type": "string"}
+        },
+        "required": ["path", "content"]
+      }
+    }],
+    "tool_choice": "required",
     "stream": true
   }'
 ```
@@ -130,7 +143,7 @@ Client / Coding Agent
         v
 Protocol Gateway
   - OpenAI Chat Completions
-  - OpenAI Responses (text JSON + text SSE compatibility)
+  - OpenAI Responses (text/function JSON + SSE compatibility)
   - Anthropic Messages (planned)
         |
         v
