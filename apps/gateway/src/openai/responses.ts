@@ -6,9 +6,19 @@ export interface ResponsesRequest extends Readonly<Record<string, unknown>> {
   readonly input: string | readonly unknown[];
   readonly instructions?: string;
   readonly stream?: false;
+  readonly max_output_tokens?: number;
+  readonly temperature?: number;
+  readonly top_p?: number;
+  readonly parallel_tool_calls?: boolean;
+  readonly tools?: readonly unknown[];
+  readonly tool_choice?: unknown;
+  readonly store?: false;
+  readonly background?: false;
 }
 
 type JsonRecord = Readonly<Record<string, unknown>>;
+
+const FUNCTION_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -22,20 +32,59 @@ function unsupported(message: string): never {
   throw new GatewayHttpError(400, 'unsupported_responses_feature', message);
 }
 
+function upstreamInvalid(message: string): never {
+  throw new GatewayHttpError(502, 'upstream_invalid_response', message);
+}
+
+function validateOptionalInteger(
+  value: unknown,
+  name: string,
+  minimum: number,
+): void {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || (value as number) < minimum) {
+    invalid(`${name} must be a safe integer greater than or equal to ${minimum}`);
+  }
+}
+
+function validateOptionalNumber(
+  value: unknown,
+  name: string,
+  minimum: number,
+  maximum: number,
+): void {
+  if (value === undefined) return;
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value < minimum ||
+    value > maximum
+  ) {
+    invalid(`${name} must be a finite number between ${minimum} and ${maximum}`);
+  }
+}
+
 function inputText(content: unknown): string {
   if (typeof content === 'string') return content;
-  if (!Array.isArray(content))
+  if (!Array.isArray(content)) {
     return invalid('message content must be a string or an array');
+  }
+  if (content.length === 0) {
+    return invalid('message content array must contain at least one item');
+  }
 
   const text: string[] = [];
   for (const part of content) {
-    if (!isRecord(part))
+    if (!isRecord(part)) {
       return invalid('input content items must be JSON objects');
-    if (part.type === 'input_text' && typeof part.text === 'string') {
-      text.push(part.text);
-      continue;
     }
-    unsupported('this phase supports only input_text message content');
+    if (part.type !== 'input_text') {
+      return unsupported('this phase supports only input_text message content');
+    }
+    if (typeof part.text !== 'string') {
+      return invalid('input_text content must contain a string text value');
+    }
+    text.push(part.text);
   }
   return text.join('');
 }
@@ -44,8 +93,12 @@ function responseInputMessages(
   input: ResponsesRequest['input'],
 ): readonly JsonRecord[] {
   if (typeof input === 'string') return [{ role: 'user', content: input }];
-  if (!Array.isArray(input))
+  if (!Array.isArray(input)) {
     return invalid('input must be a string or an array');
+  }
+  if (input.length === 0) {
+    return invalid('input array must contain at least one item');
+  }
 
   return input.map((item) => {
     if (!isRecord(item)) return invalid('input items must be JSON objects');
@@ -66,17 +119,25 @@ function responseInputMessages(
   });
 }
 
+function validateFunctionName(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !FUNCTION_NAME_PATTERN.test(value)) {
+    return invalid(
+      `${label} must contain 1 to 64 letters, numbers, underscores, or dashes`,
+    );
+  }
+  return value;
+}
+
 function translateTools(value: unknown): readonly JsonRecord[] {
-  if (!Array.isArray(value))
+  if (!Array.isArray(value)) {
     return invalid('tools must be an array when provided');
+  }
   return value.map((tool) => {
     if (!isRecord(tool)) return invalid('tool entries must be JSON objects');
     if (tool.type !== 'function') {
       return unsupported('this phase supports only function tools');
     }
-    if (typeof tool.name !== 'string' || tool.name.trim().length === 0) {
-      return invalid('function tool name must be a non-empty string');
-    }
+    const name = validateFunctionName(tool.name, 'function tool name');
     if (
       tool.description !== undefined &&
       typeof tool.description !== 'string'
@@ -90,28 +151,42 @@ function translateTools(value: unknown): readonly JsonRecord[] {
         'function tool parameters must be a JSON object when provided',
       );
     }
+    if (tool.strict !== undefined && typeof tool.strict !== 'boolean') {
+      return invalid('function tool strict must be a boolean when provided');
+    }
     return {
       type: 'function',
       function: {
-        name: tool.name,
+        name,
         ...(tool.description !== undefined
           ? { description: tool.description }
           : {}),
         parameters: tool.parameters ?? { type: 'object', properties: {} },
-        ...(typeof tool.strict === 'boolean' ? { strict: tool.strict } : {}),
+        ...(tool.strict !== undefined ? { strict: tool.strict } : {}),
       },
     };
   });
 }
 
 function translateToolChoice(value: unknown): unknown {
-  if (value === 'none' || value === 'auto' || value === 'required')
+  if (value === 'none' || value === 'auto' || value === 'required') {
     return value;
+  }
   if (!isRecord(value)) return invalid('tool_choice is invalid');
-  if (value.type !== 'function' || typeof value.name !== 'string') {
+  if (value.type !== 'function') {
     return unsupported('this phase supports only named function tool_choice');
   }
-  return { type: 'function', function: { name: value.name } };
+  const name = validateFunctionName(value.name, 'tool_choice function name');
+  return { type: 'function', function: { name } };
+}
+
+function validateDisabledFeature(
+  value: unknown,
+  name: 'store' | 'background',
+): void {
+  if (value === undefined || value === false) return;
+  if (value !== true) return invalid(`${name} must be a boolean when provided`);
+  unsupported(`${name}: true is not implemented in this phase`);
 }
 
 export function parseResponsesRequest(value: unknown): ResponsesRequest {
@@ -134,15 +209,25 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
   if (value.stream !== undefined && value.stream !== false) {
     return invalid('stream must be a boolean when provided');
   }
-  if (
-    value.previous_response_id !== undefined ||
-    value.background !== undefined ||
-    value.store !== undefined
-  ) {
-    return unsupported(
-      'stored, background, and chained responses are not implemented',
-    );
+  if (value.previous_response_id !== undefined) {
+    return unsupported('chained responses are not implemented in this phase');
   }
+
+  validateDisabledFeature(value.store, 'store');
+  validateDisabledFeature(value.background, 'background');
+  validateOptionalInteger(value.max_output_tokens, 'max_output_tokens', 1);
+  validateOptionalNumber(value.temperature, 'temperature', 0, 2);
+  validateOptionalNumber(value.top_p, 'top_p', 0, 1);
+
+  if (
+    value.parallel_tool_calls !== undefined &&
+    typeof value.parallel_tool_calls !== 'boolean'
+  ) {
+    return invalid('parallel_tool_calls must be a boolean when provided');
+  }
+  if (value.tools !== undefined) translateTools(value.tools);
+  if (value.tool_choice !== undefined) translateToolChoice(value.tool_choice);
+
   return value as ResponsesRequest;
 }
 
@@ -161,40 +246,57 @@ export function responsesToChatCompletion(
     stream: false,
   };
   if (request.max_output_tokens !== undefined) {
-    translated.max_tokens = request.max_output_tokens;
+    translated.max_completion_tokens = request.max_output_tokens;
   }
-  if (request.temperature !== undefined)
+  if (request.temperature !== undefined) {
     translated.temperature = request.temperature;
+  }
   if (request.top_p !== undefined) translated.top_p = request.top_p;
-  if (request.tools !== undefined)
+  if (request.tools !== undefined) {
     translated.tools = translateTools(request.tools);
+  }
   if (request.tool_choice !== undefined) {
     translated.tool_choice = translateToolChoice(request.tool_choice);
   }
   if (request.parallel_tool_calls !== undefined) {
-    if (typeof request.parallel_tool_calls !== 'boolean') {
-      return invalid('parallel_tool_calls must be a boolean when provided');
-    }
     translated.parallel_tool_calls = request.parallel_tool_calls;
   }
 
   return translated as ChatCompletionRequest;
 }
 
+function nonNegativeInteger(value: unknown, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    return upstreamInvalid(`Upstream ${name} must be a non-negative safe integer`);
+  }
+  return value as number;
+}
+
 function usage(value: unknown): JsonRecord | undefined {
   if (!isRecord(value)) return undefined;
-  const inputTokens =
-    typeof value.prompt_tokens === 'number' ? value.prompt_tokens : 0;
-  const outputTokens =
-    typeof value.completion_tokens === 'number' ? value.completion_tokens : 0;
-  const totalTokens =
-    typeof value.total_tokens === 'number'
-      ? value.total_tokens
-      : inputTokens + outputTokens;
+  const inputTokens = nonNegativeInteger(value.prompt_tokens, 'prompt_tokens');
+  const outputTokens = nonNegativeInteger(
+    value.completion_tokens,
+    'completion_tokens',
+  );
+  const totalTokens = nonNegativeInteger(value.total_tokens, 'total_tokens');
+
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    totalTokens === undefined
+  ) {
+    return undefined;
+  }
+
+  const normalizedInputTokens = inputTokens ?? 0;
+  const normalizedOutputTokens = outputTokens ?? 0;
   return {
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-    total_tokens: totalTokens,
+    input_tokens: normalizedInputTokens,
+    output_tokens: normalizedOutputTokens,
+    total_tokens:
+      totalTokens ?? normalizedInputTokens + normalizedOutputTokens,
   };
 }
 
@@ -202,22 +304,18 @@ export function chatCompletionToResponse(
   value: Readonly<Record<string, unknown>>,
   requestedModel: string,
 ): Readonly<Record<string, unknown>> {
+  if (typeof value.id !== 'string' || value.id.length === 0) {
+    return upstreamInvalid('Upstream returned an invalid response ID');
+  }
+
   const choices = Array.isArray(value.choices) ? value.choices : [];
   const first: unknown = choices[0];
   if (!isRecord(first)) {
-    throw new GatewayHttpError(
-      502,
-      'upstream_invalid_response',
-      'Upstream returned no response message',
-    );
+    return upstreamInvalid('Upstream returned no response message');
   }
   const rawMessage: unknown = first.message;
   if (!isRecord(rawMessage)) {
-    throw new GatewayHttpError(
-      502,
-      'upstream_invalid_response',
-      'Upstream returned no response message',
-    );
+    return upstreamInvalid('Upstream returned no response message');
   }
 
   const message = rawMessage;
@@ -225,9 +323,7 @@ export function chatCompletionToResponse(
   if (typeof message.content === 'string') {
     output.push({
       id: `msg_${
-        String(value.id)
-          .replace(/[^A-Za-z0-9_-]/g, '')
-          .slice(-48) || 'response'
+        value.id.replace(/[^A-Za-z0-9_-]/g, '').slice(-48) || 'response'
       }`,
       type: 'message',
       status: 'completed',
@@ -236,39 +332,56 @@ export function chatCompletionToResponse(
         { type: 'output_text', text: message.content, annotations: [] },
       ],
     });
+  } else if (message.content !== undefined && message.content !== null) {
+    return upstreamInvalid('Upstream assistant content must be a string or null');
   }
 
-  if (Array.isArray(message.tool_calls)) {
-    for (const entry of message.tool_calls) {
-      if (!isRecord(entry) || !isRecord(entry.function)) continue;
-      const callId = typeof entry.id === 'string' ? entry.id : undefined;
-      const name =
-        typeof entry.function.name === 'string'
-          ? entry.function.name
-          : undefined;
-      const argumentsValue =
-        typeof entry.function.arguments === 'string'
-          ? entry.function.arguments
-          : '{}';
-      if (callId && name) {
-        output.push({
-          type: 'function_call',
-          id: callId,
-          call_id: callId,
-          name,
-          arguments: argumentsValue,
-          status: 'completed',
-        });
-      }
+  if (message.tool_calls !== undefined && message.tool_calls !== null) {
+    if (!Array.isArray(message.tool_calls)) {
+      return upstreamInvalid('Upstream tool_calls must be an array or null');
     }
+    for (const entry of message.tool_calls) {
+      if (!isRecord(entry) || !isRecord(entry.function)) {
+        return upstreamInvalid('Upstream returned a malformed function call');
+      }
+      if (entry.type !== undefined && entry.type !== 'function') {
+        return upstreamInvalid('Upstream returned an unsupported tool call type');
+      }
+      const callId = entry.id;
+      const name = entry.function.name;
+      const argumentsValue = entry.function.arguments;
+      if (
+        typeof callId !== 'string' ||
+        callId.length === 0 ||
+        typeof name !== 'string' ||
+        !FUNCTION_NAME_PATTERN.test(name) ||
+        typeof argumentsValue !== 'string'
+      ) {
+        return upstreamInvalid('Upstream returned a malformed function call');
+      }
+      output.push({
+        type: 'function_call',
+        id: callId,
+        call_id: callId,
+        name,
+        arguments: argumentsValue,
+        status: 'completed',
+      });
+    }
+  }
+
+  if (output.length === 0) {
+    return upstreamInvalid('Upstream response contained no supported output');
   }
 
   const normalizedUsage = usage(value.usage);
   return {
-    id: typeof value.id === 'string' ? value.id : 'resp_tony_router',
+    id: value.id,
     object: 'response',
     created_at:
-      typeof value.created === 'number'
+      typeof value.created === 'number' &&
+      Number.isSafeInteger(value.created) &&
+      value.created >= 0
         ? value.created
         : Math.floor(Date.now() / 1000),
     status: 'completed',
