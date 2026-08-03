@@ -1,4 +1,4 @@
-name: Format Preview
+name: Apply Responses Formatting
 
 on:
   pull_request:
@@ -9,13 +9,16 @@ on:
       - '.github/workflows/format-preview.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  preview:
+  format:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.14.0
@@ -23,13 +26,13 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      - name: Format Responses files
+      - name: Apply Prettier
         run: pnpm exec prettier --write apps/gateway/src/app.ts apps/gateway/src/openai/responses.ts apps/gateway/test/responses.test.ts
-      - uses: actions/upload-artifact@v4
-        with:
-          name: formatted-responses-files
-          path: |
-            apps/gateway/src/app.ts
-            apps/gateway/src/openai/responses.ts
-            apps/gateway/test/responses.test.ts
-          retention-days: 1
+      - name: Commit formatting
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/gateway/src/app.ts apps/gateway/src/openai/responses.ts apps/gateway/test/responses.test.ts
+          git commit -m "style(responses): apply repository formatting"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
