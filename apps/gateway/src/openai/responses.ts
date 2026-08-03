@@ -42,8 +42,14 @@ function validateOptionalInteger(
   minimum: number,
 ): void {
   if (value === undefined) return;
-  if (!Number.isSafeInteger(value) || (value as number) < minimum) {
-    invalid(`${name} must be a safe integer greater than or equal to ${minimum}`);
+  if (
+    typeof value !== 'number' ||
+    !Number.isSafeInteger(value) ||
+    value < minimum
+  ) {
+    invalid(
+      `${name} must be a safe integer greater than or equal to ${minimum}`,
+    );
   }
 }
 
@@ -60,7 +66,9 @@ function validateOptionalNumber(
     value < minimum ||
     value > maximum
   ) {
-    invalid(`${name} must be a finite number between ${minimum} and ${maximum}`);
+    invalid(
+      `${name} must be a finite number between ${minimum} and ${maximum}`,
+    );
   }
 }
 
@@ -267,10 +275,12 @@ export function responsesToChatCompletion(
 
 function nonNegativeInteger(value: unknown, name: string): number | undefined {
   if (value === undefined) return undefined;
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    return upstreamInvalid(`Upstream ${name} must be a non-negative safe integer`);
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    return upstreamInvalid(
+      `Upstream ${name} must be a non-negative safe integer`,
+    );
   }
-  return value as number;
+  return value;
 }
 
 function usage(value: unknown): JsonRecord | undefined {
@@ -295,8 +305,7 @@ function usage(value: unknown): JsonRecord | undefined {
   return {
     input_tokens: normalizedInputTokens,
     output_tokens: normalizedOutputTokens,
-    total_tokens:
-      totalTokens ?? normalizedInputTokens + normalizedOutputTokens,
+    total_tokens: totalTokens ?? normalizedInputTokens + normalizedOutputTokens,
   };
 }
 
@@ -333,7 +342,9 @@ export function chatCompletionToResponse(
       ],
     });
   } else if (message.content !== undefined && message.content !== null) {
-    return upstreamInvalid('Upstream assistant content must be a string or null');
+    return upstreamInvalid(
+      'Upstream assistant content must be a string or null',
+    );
   }
 
   if (message.tool_calls !== undefined && message.tool_calls !== null) {
@@ -345,7 +356,9 @@ export function chatCompletionToResponse(
         return upstreamInvalid('Upstream returned a malformed function call');
       }
       if (entry.type !== undefined && entry.type !== 'function') {
-        return upstreamInvalid('Upstream returned an unsupported tool call type');
+        return upstreamInvalid(
+          'Upstream returned an unsupported tool call type',
+        );
       }
       const callId = entry.id;
       const name = entry.function.name;
