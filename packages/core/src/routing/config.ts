@@ -3,7 +3,9 @@ import { parseDocument } from 'yaml';
 import type { ModelCapabilities } from '../capabilities.js';
 import type {
   ProviderKind,
+  RoutingAccount,
   RoutingConfig,
+  RoutingConfigVersion,
   RoutingModel,
   RoutingProfile,
   RoutingProfileRoute,
@@ -147,8 +149,9 @@ function parseProviders(
 ): Readonly<Record<string, RoutingProvider>> {
   const input = record(value, 'providers');
   const entries = Object.entries(input);
-  if (entries.length === 0)
+  if (entries.length === 0) {
     fail('providers', 'must define at least one provider');
+  }
 
   return frozenRecord(
     entries.map(([rawId, rawProvider]) => {
@@ -165,6 +168,56 @@ function parseProviders(
       return [id, Object.freeze({ id, kind })] as const;
     }),
   );
+}
+
+function implicitAccounts(
+  providers: Readonly<Record<string, RoutingProvider>>,
+): Readonly<Record<string, RoutingAccount>> {
+  return frozenRecord(
+    Object.values(providers).map((provider) => [
+      provider.id,
+      Object.freeze({ id: provider.id, providerId: provider.id }),
+    ] as const),
+  );
+}
+
+function parseAccounts(
+  value: unknown,
+  providers: Readonly<Record<string, RoutingProvider>>,
+): Readonly<Record<string, RoutingAccount>> {
+  const input = record(value, 'accounts');
+  const entries = Object.entries(input);
+  if (entries.length === 0) {
+    fail('accounts', 'must define at least one account');
+  }
+
+  const accounts = frozenRecord(
+    entries.map(([rawId, rawAccount]) => {
+      const id = identifier(rawId, `accounts.${rawId}`);
+      const account = record(rawAccount, `accounts.${id}`);
+      allowedKeys(account, ['provider'], `accounts.${id}`);
+      return [
+        id,
+        Object.freeze({
+          id,
+          providerId: identifier(
+            account.provider,
+            `accounts.${id}.provider`,
+          ),
+        }),
+      ] as const;
+    }),
+  );
+
+  for (const account of Object.values(accounts)) {
+    if (!own(providers, account.providerId)) {
+      fail(
+        `accounts.${account.id}.provider`,
+        `references unknown provider ${account.providerId}`,
+      );
+    }
+  }
+  return accounts;
 }
 
 function parseModels(value: unknown): Readonly<Record<string, RoutingModel>> {
@@ -200,7 +253,11 @@ function parseModels(value: unknown): Readonly<Record<string, RoutingModel>> {
   );
 }
 
-function parseRoutes(value: unknown): Readonly<Record<string, RoutingRoute>> {
+function parseRoutes(
+  value: unknown,
+  version: RoutingConfigVersion,
+  models: Readonly<Record<string, RoutingModel>>,
+): Readonly<Record<string, RoutingRoute>> {
   const input = record(value, 'routes');
   const entries = Object.entries(input);
   if (entries.length === 0) fail('routes', 'must define at least one route');
@@ -209,12 +266,29 @@ function parseRoutes(value: unknown): Readonly<Record<string, RoutingRoute>> {
     entries.map(([rawId, rawRoute]) => {
       const id = identifier(rawId, `routes.${rawId}`);
       const route = record(rawRoute, `routes.${id}`);
-      allowedKeys(route, ['model', 'enabled', 'priority'], `routes.${id}`);
+      allowedKeys(
+        route,
+        version === 1
+          ? ['model', 'enabled', 'priority']
+          : ['model', 'account', 'enabled', 'priority'],
+        `routes.${id}`,
+      );
+      const modelId = identifier(route.model, `routes.${id}.model`);
+      const model = models[modelId];
+      if (!model) {
+        fail(`routes.${id}.model`, `references unknown model ${modelId}`);
+      }
+      const accountId =
+        version === 1
+          ? model.providerId
+          : identifier(route.account, `routes.${id}.account`);
+
       return [
         id,
         Object.freeze({
           id,
-          modelId: identifier(route.model, `routes.${id}.model`),
+          modelId,
+          accountId,
           enabled:
             route.enabled === undefined
               ? true
@@ -256,8 +330,9 @@ function parseProfiles(
 ): Readonly<Record<string, RoutingProfile>> {
   const input = record(value, 'profiles');
   const entries = Object.entries(input);
-  if (entries.length === 0)
+  if (entries.length === 0) {
     fail('profiles', 'must define at least one profile');
+  }
 
   return frozenRecord(
     entries.map(([rawId, rawProfile]) => {
@@ -300,10 +375,24 @@ function validateReferences(config: RoutingConfig): void {
     }
   }
   for (const route of Object.values(config.routes)) {
-    if (!own(config.models, route.modelId)) {
+    const account = config.accounts[route.accountId];
+    if (!account) {
+      fail(
+        `routes.${route.id}.account`,
+        `references unknown account ${route.accountId}`,
+      );
+    }
+    const model = config.models[route.modelId];
+    if (!model) {
       fail(
         `routes.${route.id}.model`,
         `references unknown model ${route.modelId}`,
+      );
+    }
+    if (account.providerId !== model.providerId) {
+      fail(
+        `routes.${route.id}`,
+        `account ${account.id} belongs to provider ${account.providerId}, but model ${model.id} belongs to provider ${model.providerId}`,
       );
     }
   }
@@ -362,19 +451,39 @@ export function parseRoutingConfig(source: string): RoutingConfig {
   }
 
   const root = record(value, 'root');
+  const version = root.version;
+  if (version !== 1 && version !== 2) {
+    fail('version', 'must equal 1 or 2');
+  }
   allowedKeys(
     root,
-    ['version', 'defaultProfile', 'providers', 'models', 'routes', 'profiles'],
+    version === 1
+      ? ['version', 'defaultProfile', 'providers', 'models', 'routes', 'profiles']
+      : [
+          'version',
+          'defaultProfile',
+          'providers',
+          'accounts',
+          'models',
+          'routes',
+          'profiles',
+        ],
     'root',
   );
-  if (root.version !== 1) fail('version', 'must equal 1');
 
+  const providers = parseProviders(root.providers);
+  const accounts =
+    version === 1
+      ? implicitAccounts(providers)
+      : parseAccounts(root.accounts, providers);
+  const models = parseModels(root.models);
   const config: RoutingConfig = Object.freeze({
-    version: 1,
+    version,
     defaultProfileId: identifier(root.defaultProfile, 'defaultProfile'),
-    providers: parseProviders(root.providers),
-    models: parseModels(root.models),
-    routes: parseRoutes(root.routes),
+    providers,
+    accounts,
+    models,
+    routes: parseRoutes(root.routes, version, models),
     profiles: parseProfiles(root.profiles),
   });
   validateReferences(config);
