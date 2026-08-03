@@ -158,7 +158,7 @@ export class CircuitBreakerRegistry {
     if (circuit.state === 'half_open') circuit.halfOpenInFlight += 1;
     const token = Symbol(id);
     this.#activePermits.set(token, id);
-    const permit = Object.freeze(new CircuitPermit(key, circuit.state, token));
+    const permit = new CircuitPermit(key, circuit.state, token);
     return Object.freeze({
       allowed: true,
       permit,

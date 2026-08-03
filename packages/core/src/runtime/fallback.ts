@@ -178,7 +178,11 @@ function errorFromUnknown(value: unknown, message: string): Error {
   return value instanceof Error ? value : new Error(message, { cause: value });
 }
 
-function codedError(code: string, message: string, cause?: unknown): CodedError {
+function codedError(
+  code: string,
+  message: string,
+  cause?: unknown,
+): CodedError {
   return Object.assign(new Error(message, { cause }), { code });
 }
 
@@ -527,6 +531,7 @@ export async function executeRoutedRequest<T>(
             now() - startedAt + delayMs < policy.totalDeadlineMs;
 
           if (
+            circuit.state !== 'open' &&
             failure.retryable &&
             hasRouteAttempt &&
             hasTotalAttempt &&

@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/require-await -- provider mocks intentionally implement the asynchronous operation contract */
+
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { describe, expect, it } from 'vitest';
@@ -131,7 +133,14 @@ function fakeClock(): {
     now: () => current,
     delays,
     sleep: (delayMs, signal) => {
-      if (signal.aborted) return Promise.reject(signal.reason);
+      if (signal.aborted) {
+        const reason = signal.reason as unknown;
+        return Promise.reject(
+          reason instanceof Error
+            ? reason
+            : new Error('Fake retry sleep was aborted', { cause: reason }),
+        );
+      }
       delays.push(delayMs);
       current += delayMs;
       return Promise.resolve();
@@ -495,7 +504,7 @@ describe('executeRoutedRequest', () => {
       operation: async ({ route, signal }) => {
         calls.push(route.routeId);
         await new Promise<void>((resolve) => {
-          signal.addEventListener('abort', resolve, { once: true });
+          signal.addEventListener('abort', () => resolve(), { once: true });
         });
         throw codedError('client_closed_request');
       },

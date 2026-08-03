@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
@@ -15,11 +15,8 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Checkout feature branch
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: feat/safe-fallback-runtime
-          fetch-depth: 0
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -35,82 +32,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Apply verified Phase 3 fixes
-        run: |
-          pnpm --filter @tony-router/core add -D @types/node@22.20.1
-          python - <<'PY'
-          from pathlib import Path
-
-          circuit = Path('packages/core/src/runtime/circuit-breaker.ts')
-          circuit_text = circuit.read_text()
-          old_permit = '    const permit = Object.freeze(new CircuitPermit(key, circuit.state, token));'
-          new_permit = '    const permit = new CircuitPermit(key, circuit.state, token);'
-          if circuit_text.count(old_permit) != 1:
-              raise SystemExit('expected exactly one frozen permit')
-          circuit.write_text(circuit_text.replace(old_permit, new_permit, 1))
-
-          fallback = Path('packages/core/src/runtime/fallback.ts')
-          fallback_text = fallback.read_text()
-          retry_anchor = '            failure.retryable &&\n'
-          if fallback_text.count(retry_anchor) != 1:
-              raise SystemExit('expected exactly one retry anchor')
-          fallback.write_text(
-              fallback_text.replace(
-                  retry_anchor,
-                  "            circuit.state !== 'open' &&\n" + retry_anchor,
-                  1,
-              )
-          )
-
-          test = Path('packages/core/test/runtime-fallback.test.ts')
-          test_text = test.read_text()
-          directive = (
-              '/* eslint-disable @typescript-eslint/require-await -- '
-              'provider mocks intentionally implement the asynchronous operation contract */\n\n'
-          )
-          if not test_text.startswith('/* eslint-disable @typescript-eslint/require-await'):
-              test_text = directive + test_text
-
-          old_sleep = '      if (signal.aborted) return Promise.reject(signal.reason);'
-          new_sleep = '''      if (signal.aborted) {
-            const reason = signal.reason as unknown;
-            return Promise.reject(
-              reason instanceof Error
-                ? reason
-                : new Error('Fake retry sleep was aborted', { cause: reason }),
-            );
-          }'''
-          if test_text.count(old_sleep) != 1:
-              raise SystemExit('expected exactly one fake sleep rejection')
-          test_text = test_text.replace(old_sleep, new_sleep, 1)
-
-          old_listener = "          signal.addEventListener('abort', resolve, { once: true });"
-          new_listener = "          signal.addEventListener('abort', () => resolve(), { once: true });"
-          if test_text.count(old_listener) != 1:
-              raise SystemExit('expected exactly one abort listener')
-          test.write_text(test_text.replace(old_listener, new_listener, 1))
-          PY
-          pnpm exec prettier --write \
-            packages/core/package.json \
-            packages/core/src/runtime/circuit-breaker.ts \
-            packages/core/src/runtime/fallback.ts \
-            packages/core/test/runtime-fallback.test.ts \
-            pnpm-lock.yaml
-          git checkout origin/main -- .github/workflows/ci.yml
-
       - name: Verify
         run: pnpm verify
-
-      - name: Commit verified Phase 3 fixes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            packages/core/package.json \
-            packages/core/src/runtime/circuit-breaker.ts \
-            packages/core/src/runtime/fallback.ts \
-            packages/core/test/runtime-fallback.test.ts \
-            pnpm-lock.yaml \
-            .github/workflows/ci.yml
-          git commit -m "fix(core): verify fallback runtime hardening"
-          git push origin HEAD:feat/safe-fallback-runtime
