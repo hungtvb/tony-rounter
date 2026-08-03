@@ -23,7 +23,7 @@ describe('Responses API protocol translation', () => {
         { role: 'user', content: 'Fix the bug.' },
       ],
       stream: false,
-      max_tokens: 800,
+      max_completion_tokens: 800,
     });
   });
 
@@ -89,6 +89,59 @@ describe('Responses API protocol translation', () => {
       ],
       tool_choice: { type: 'function', function: { name: 'write_file' } },
     });
+  });
+
+  it('allows explicitly disabled storage and background execution', () => {
+    expect(
+      parseResponsesRequest({
+        model: 'coding',
+        input: 'hello',
+        store: false,
+        background: false,
+      }),
+    ).toMatchObject({ store: false, background: false });
+  });
+
+  it('rejects malformed generation controls with stable invalid_request errors', () => {
+    const invalidRequests = [
+      { max_output_tokens: 0 },
+      { max_output_tokens: '100' },
+      { temperature: -0.1 },
+      { temperature: 2.1 },
+      { top_p: -0.1 },
+      { top_p: 1.1 },
+      { parallel_tool_calls: 'yes' },
+    ];
+
+    for (const fields of invalidRequests) {
+      try {
+        parseResponsesRequest({ model: 'coding', input: 'hello', ...fields });
+        throw new Error('Expected request parsing to fail');
+      } catch (error) {
+        expect(error).toMatchObject({
+          statusCode: 400,
+          code: 'invalid_request',
+        });
+      }
+    }
+  });
+
+  it('rejects invalid function tool boundaries', () => {
+    expect(() =>
+      parseResponsesRequest({
+        model: 'coding',
+        input: 'hello',
+        tools: [{ type: 'function', name: 'bad name', strict: 'yes' }],
+      }),
+    ).toThrowError(GatewayHttpError);
+
+    expect(() =>
+      parseResponsesRequest({
+        model: 'coding',
+        input: 'hello',
+        tools: [{ type: 'function', name: 'valid_name', strict: 'yes' }],
+      }),
+    ).toThrowError(/strict must be a boolean/);
   });
 
   it('rejects streaming until the Responses SSE contract is implemented', () => {
@@ -184,5 +237,48 @@ describe('Responses API protocol translation', () => {
       ],
       usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
     });
+  });
+
+  it('fails closed for malformed upstream function calls', () => {
+    expect(() =>
+      chatCompletionToResponse(
+        {
+          id: 'chatcmpl_bad_tool',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'write_file', arguments: 123 },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        'coding',
+      ),
+    ).toThrowError(/malformed function call/);
+  });
+
+  it('fails closed for invalid upstream usage values', () => {
+    expect(() =>
+      chatCompletionToResponse(
+        {
+          id: 'chatcmpl_bad_usage',
+          choices: [
+            {
+              message: { role: 'assistant', content: 'hello' },
+            },
+          ],
+          usage: { prompt_tokens: -1, completion_tokens: 2, total_tokens: 1 },
+        },
+        'coding',
+      ),
+    ).toThrowError(/prompt_tokens/);
   });
 });
