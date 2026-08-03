@@ -52,7 +52,7 @@ jobs:
             apps/gateway/test/routed-gateway.test.ts \
             docs/multi-provider-gateway.md
 
-      - name: Configure intentional async test doubles
+      - name: Apply verified source fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -61,6 +61,7 @@ jobs:
           printf '%s\n\n' '/* eslint-disable @typescript-eslint/require-await -- provider doubles intentionally implement asynchronous interfaces */' > "$temporary"
           cat "$file" >> "$temporary"
           mv "$temporary" "$file"
+          python -c 'from pathlib import Path; p=Path("apps/gateway/src/routing/provider.ts"); s=p.read_text(); a="    try {\n      const execution = await executeRoutedRequest({"; b="    try {\n      const reservedOutputTokens = outputReserve(request);\n      const execution = await executeRoutedRequest({"; c="          ...(outputReserve(request) !== undefined\n            ? { reservedOutputTokens: outputReserve(request) }\n            : {}),"; d="          ...(reservedOutputTokens !== undefined\n            ? { reservedOutputTokens }\n            : {}),"; assert s.count(a) == 1 and s.count(c) == 1; p.write_text(s.replace(a, b, 1).replace(c, d, 1))'
 
       - name: Install and update workspace lockfile
         run: pnpm install --no-frozen-lockfile
