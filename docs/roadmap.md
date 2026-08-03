@@ -73,18 +73,23 @@ Delivered text compatibility slices:
 - non-streaming function tool and named tool-choice mapping;
 - response text, function-call, usage, and public-model normalization;
 - text-only `stream: true` translation into ordered Responses lifecycle events;
+- streaming custom function-call output items and argument delta/done events;
+- required, named, disabled, and automatic function tool-choice preservation;
+- deterministic mixed text/function output and bounded parallel function calls;
 - monotonic sequence numbers, terminal usage, and no exposed Chat Completions `[DONE]` sentinel;
 - fallback allowed only before output, with routed identity headers preserved;
 - downstream disconnect propagation and terminal post-emission `error` events;
-- explicit rejection of unsupported streaming tools, image, hosted-tool, stored, background, and chained-response features;
+- fail-closed validation for changed call IDs/names, malformed indices, unconfigured functions, ambiguous mixed deltas, and serial/parallel contract violations;
+- explicit rejection of image, hosted-tool, refusal/reasoning, stored, background, function-output submission, and chained-response features;
 - gateway contracts for authentication, missing provider, JSON/SSE translation, routed fallback, no post-output replay, disconnect, malformed streams, and protocol mismatch.
 
 Remaining:
 
-- streaming function-call arguments and output items;
 - image input and capability-preserving multimodal mapping;
+- refusal and reasoning stream events;
 - structured-output validation and compatibility matrix;
 - additional Codex-style fixtures;
+- function-call output submission and response chaining;
 - optional stored/chained/background semantics only after their ownership and persistence boundaries are defined.
 
 **Exit evidence**

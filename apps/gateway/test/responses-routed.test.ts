@@ -157,12 +157,62 @@ function successfulStream(id: string, text: string): ChatCompletionResult {
   };
 }
 
+function successfulFunctionStream(id: string): ChatCompletionResult {
+  return {
+    stream: true,
+    body: Readable.from([
+      sse({
+        id,
+        created: 123,
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_1',
+                  type: 'function',
+                  function: {
+                    name: 'write_file',
+                    arguments: '{"path":"a.txt"}',
+                  },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      }),
+      sse({
+        id,
+        created: 123,
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: 'tool_calls',
+          },
+        ],
+      }),
+      sse('[DONE]'),
+    ]),
+  };
+}
+
 function track(app: FastifyInstance): FastifyInstance {
   apps.push(app);
   return app;
 }
 
-async function routedResponse(app: FastifyInstance) {
+async function routedResponse(
+  app: FastifyInstance,
+  payload: Readonly<Record<string, unknown>> = {
+    model: 'tony-auto',
+    input: 'hello',
+    stream: true,
+  },
+) {
   return app.inject({
     method: 'POST',
     url: '/v1/responses',
@@ -171,7 +221,7 @@ async function routedResponse(app: FastifyInstance) {
       'content-type': 'application/json',
       'x-tony-router-replay-safe': 'true',
     },
-    payload: { model: 'tony-auto', input: 'hello', stream: true },
+    payload,
   });
 }
 
@@ -213,6 +263,61 @@ describe('routed Responses text streaming', () => {
     expect(backup.requests).toHaveLength(1);
   });
 
+  it('routes streaming function tools and preserves public identity', async () => {
+    const primary = new FakeProvider(async () => {
+      throw new GatewayHttpError(
+        502,
+        'upstream_authentication_failed',
+        'credentials rejected',
+      );
+    });
+    const backup = new FakeProvider(async () =>
+      successfulFunctionStream('chatcmpl_backup_function'),
+    );
+    const app = track(
+      buildGateway({
+        config: gatewayConfig(),
+        router: routerConfig(),
+        routedProviders: { primary, backup },
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await routedResponse(app, {
+      model: 'tony-auto',
+      input: 'write a file',
+      stream: true,
+      parallel_tool_calls: false,
+      tools: [
+        {
+          type: 'function',
+          name: 'write_file',
+          parameters: { type: 'object', properties: {} },
+        },
+      ],
+      tool_choice: 'required',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['x-tony-router-route']).toBe('backup-route');
+    expect(response.headers['x-tony-router-provider']).toBe('backup');
+    expect(response.headers['x-tony-router-account']).toBe('backup');
+    expect(response.headers['x-tony-router-attempts']).toBe('2');
+    expect(response.body).toContain(
+      'event: response.function_call_arguments.delta',
+    );
+    expect(response.body).toContain('"model":"tony-auto"');
+    expect(response.body).toContain('"call_id":"call_1"');
+    expect(primary.requests[0]).toMatchObject({
+      model: 'primary-upstream',
+      tool_choice: 'required',
+    });
+    expect(backup.requests[0]).toMatchObject({
+      model: 'backup-upstream',
+      tool_choice: 'required',
+    });
+  });
+
   it('never invokes fallback after the primary stream emits output', async () => {
     const primary = new FakeProvider(async () => ({
       stream: true,
@@ -241,6 +346,69 @@ describe('routed Responses text streaming', () => {
     expect(response.headers['x-tony-router-account']).toBe('primary');
     expect(response.headers['x-tony-router-attempts']).toBe('1');
     expect(response.body).toContain('event: response.output_text.delta');
+    expect(response.body).toContain('event: error');
+    expect(response.body).not.toContain('event: response.completed');
+    expect(primary.requests).toHaveLength(1);
+    expect(backup.requests).toHaveLength(0);
+  });
+
+  it('never invokes fallback after a primary function-call event', async () => {
+    const primary = new FakeProvider(async () => ({
+      stream: true,
+      body: Readable.from([
+        sse({
+          id: 'chatcmpl_primary_function',
+          created: 123,
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_1',
+                    type: 'function',
+                    function: {
+                      name: 'write_file',
+                      arguments: '{"path":"',
+                    },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        }),
+        sse('{"broken":'),
+      ]),
+    }));
+    const backup = new FakeProvider(async () =>
+      successfulFunctionStream('chatcmpl_backup_function'),
+    );
+    const app = track(
+      buildGateway({
+        config: gatewayConfig(),
+        router: routerConfig(),
+        routedProviders: { primary, backup },
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await routedResponse(app, {
+      model: 'tony-auto',
+      input: 'write a file',
+      stream: true,
+      tools: [{ type: 'function', name: 'write_file' }],
+      tool_choice: 'required',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['x-tony-router-route']).toBe('primary-route');
+    expect(response.headers['x-tony-router-provider']).toBe('primary');
+    expect(response.headers['x-tony-router-attempts']).toBe('1');
+    expect(response.body).toContain(
+      'event: response.function_call_arguments.delta',
+    );
     expect(response.body).toContain('event: error');
     expect(response.body).not.toContain('event: response.completed');
     expect(primary.requests).toHaveLength(1);

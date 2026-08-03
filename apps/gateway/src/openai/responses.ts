@@ -1,6 +1,19 @@
 import { GatewayHttpError } from '../errors.js';
 import type { ChatCompletionRequest } from './protocol.js';
 
+export interface ResponsesFunctionTool extends Readonly<
+  Record<string, unknown>
+> {
+  readonly type: 'function';
+  readonly name: string;
+  readonly description?: string;
+  readonly parameters?: Readonly<Record<string, unknown>>;
+  readonly strict?: boolean;
+}
+
+export type ResponsesToolChoice =
+  'none' | 'auto' | 'required' | Readonly<{ type: 'function'; name: string }>;
+
 export interface ResponsesRequest extends Readonly<Record<string, unknown>> {
   readonly model: string;
   readonly input: string | readonly unknown[];
@@ -10,8 +23,8 @@ export interface ResponsesRequest extends Readonly<Record<string, unknown>> {
   readonly temperature?: number;
   readonly top_p?: number;
   readonly parallel_tool_calls?: boolean;
-  readonly tools?: readonly unknown[];
-  readonly tool_choice?: unknown;
+  readonly tools?: readonly ResponsesFunctionTool[];
+  readonly tool_choice?: ResponsesToolChoice;
   readonly store?: false;
   readonly background?: false;
 }
@@ -140,12 +153,17 @@ function translateTools(value: unknown): readonly JsonRecord[] {
   if (!Array.isArray(value)) {
     return invalid('tools must be an array when provided');
   }
+  const names = new Set<string>();
   return value.map((tool) => {
     if (!isRecord(tool)) return invalid('tool entries must be JSON objects');
     if (tool.type !== 'function') {
       return unsupported('this phase supports only function tools');
     }
     const name = validateFunctionName(tool.name, 'function tool name');
+    if (names.has(name)) {
+      return invalid(`function tool name ${name} is duplicated`);
+    }
+    names.add(name);
     if (
       tool.description !== undefined &&
       typeof tool.description !== 'string'
@@ -188,6 +206,37 @@ function translateToolChoice(value: unknown): unknown {
   return { type: 'function', function: { name } };
 }
 
+function validateToolChoiceAgainstTools(value: JsonRecord): void {
+  if (value.tool_choice === undefined) return;
+
+  const names = new Set<string>();
+  if (value.tools !== undefined) {
+    for (const translated of translateTools(value.tools)) {
+      if (!isRecord(translated.function)) {
+        return invalid('translated function tool is invalid');
+      }
+      const name = translated.function.name;
+      if (typeof name !== 'string') {
+        return invalid('translated function tool name is invalid');
+      }
+      names.add(name);
+    }
+  }
+
+  if (value.tool_choice === 'required' && names.size === 0) {
+    invalid('tool_choice required needs at least one function tool');
+  }
+  if (isRecord(value.tool_choice) && value.tool_choice.type === 'function') {
+    const name = validateFunctionName(
+      value.tool_choice.name,
+      'tool_choice function name',
+    );
+    if (!names.has(name)) {
+      invalid(`tool_choice function ${name} is not present in tools`);
+    }
+  }
+}
+
 function validateDisabledFeature(
   value: unknown,
   name: 'store' | 'background',
@@ -195,20 +244,6 @@ function validateDisabledFeature(
   if (value === undefined || value === false) return;
   if (value !== true) return invalid(`${name} must be a boolean when provided`);
   unsupported(`${name}: true is not implemented in this phase`);
-}
-
-function validateStreamingToolBoundary(value: JsonRecord): void {
-  if (value.stream !== true) return;
-  if (Array.isArray(value.tools) && value.tools.length > 0) {
-    unsupported('streaming function tools are not implemented in this phase');
-  }
-  if (
-    value.tool_choice !== undefined &&
-    value.tool_choice !== 'none' &&
-    value.tool_choice !== 'auto'
-  ) {
-    unsupported('streaming named or required tool choice is not implemented');
-  }
 }
 
 export function parseResponsesRequest(value: unknown): ResponsesRequest {
@@ -244,7 +279,7 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
   }
   if (value.tools !== undefined) translateTools(value.tools);
   if (value.tool_choice !== undefined) translateToolChoice(value.tool_choice);
-  validateStreamingToolBoundary(value);
+  validateToolChoiceAgainstTools(value);
 
   return value as ResponsesRequest;
 }

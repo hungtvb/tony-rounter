@@ -18,7 +18,7 @@ import {
   type OpenAICompatibleProvider,
 } from './openai/client.js';
 import { parseChatCompletionRequest } from './openai/protocol.js';
-import { prepareResponsesTextStream } from './openai/responses-stream-adapter.js';
+import { prepareResponsesStream } from './openai/responses-stream-adapter.js';
 import {
   chatCompletionToResponse,
   parseResponsesRequest,
@@ -357,7 +357,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
           );
         }
 
-        const body = await prepareResponsesTextStream(result.body, {
+        const body = await prepareResponsesStream(result.body, {
           model: responsesRequest.model,
           ...(responsesRequest.instructions !== undefined
             ? { instructions: responsesRequest.instructions }
@@ -374,8 +374,10 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
           ...(responsesRequest.top_p !== undefined
             ? { topP: responsesRequest.top_p }
             : {}),
-          ...(responsesRequest.tool_choice === 'none' ||
-          responsesRequest.tool_choice === 'auto'
+          ...(responsesRequest.tools !== undefined
+            ? { tools: responsesRequest.tools }
+            : {}),
+          ...(responsesRequest.tool_choice !== undefined
             ? { toolChoice: responsesRequest.tool_choice }
             : {}),
         });

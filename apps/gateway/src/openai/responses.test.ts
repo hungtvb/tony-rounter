@@ -145,7 +145,7 @@ describe('Responses API protocol translation', () => {
     ).toThrowError(/strict must be a boolean/);
   });
 
-  it('translates text streaming requests with usage reporting enabled', () => {
+  it('translates streaming function tools with usage reporting enabled', () => {
     expect(
       responsesToChatCompletion(
         parseResponsesRequest({
@@ -153,20 +153,52 @@ describe('Responses API protocol translation', () => {
           input: 'hello',
           stream: true,
           max_output_tokens: 100,
+          tools: [
+            {
+              type: 'function',
+              name: 'write_file',
+              parameters: { type: 'object', properties: {} },
+            },
+          ],
+          tool_choice: { type: 'function', name: 'write_file' },
+          parallel_tool_calls: false,
         }),
       ),
-    ).toEqual({
+    ).toMatchObject({
       model: 'coding',
       messages: [{ role: 'user', content: 'hello' }],
       stream: true,
       stream_options: { include_usage: true },
       max_completion_tokens: 100,
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'write_file',
+            parameters: { type: 'object', properties: {} },
+          },
+        },
+      ],
+      tool_choice: { type: 'function', function: { name: 'write_file' } },
+      parallel_tool_calls: false,
     });
   });
 
-  it('rejects streaming function tools and required or named tool choices', () => {
-    const requests = [
-      {
+  it('rejects ambiguous tool configuration before routing', () => {
+    expect(() =>
+      parseResponsesRequest({
+        model: 'coding',
+        input: 'hello',
+        stream: true,
+        tool_choice: 'required',
+      }),
+    ).toThrowError(/at least one function tool/);
+
+    expect(() =>
+      parseResponsesRequest({
+        model: 'coding',
+        input: 'hello',
+        stream: true,
         tools: [
           {
             type: 'function',
@@ -174,21 +206,20 @@ describe('Responses API protocol translation', () => {
             parameters: { type: 'object', properties: {} },
           },
         ],
-      },
-      { tool_choice: 'required' },
-      { tool_choice: { type: 'function', name: 'write_file' } },
-    ];
+        tool_choice: { type: 'function', name: 'read_file' },
+      }),
+    ).toThrowError(/not present in tools/);
 
-    for (const fields of requests) {
-      expect(() =>
-        parseResponsesRequest({
-          model: 'coding',
-          input: 'hello',
-          stream: true,
-          ...fields,
-        }),
-      ).toThrowError(/streaming/);
-    }
+    expect(() =>
+      parseResponsesRequest({
+        model: 'coding',
+        input: 'hello',
+        tools: [
+          { type: 'function', name: 'write_file' },
+          { type: 'function', name: 'write_file' },
+        ],
+      }),
+    ).toThrowError(/duplicated/);
   });
 
   it('rejects image input rather than silently dropping capability requirements', () => {

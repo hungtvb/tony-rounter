@@ -71,6 +71,47 @@ function streamChunk(
   };
 }
 
+function functionStreamChunk(
+  fields: Readonly<{
+    id?: string;
+    name?: string;
+    arguments?: string;
+    finishReason?: string | null;
+  }>,
+): Readonly<Record<string, unknown>> {
+  return {
+    id: 'chatcmpl_gateway_stream',
+    created: 123,
+    choices: [
+      {
+        index: 0,
+        delta:
+          fields.id === undefined &&
+          fields.name === undefined &&
+          fields.arguments === undefined
+            ? {}
+            : {
+                tool_calls: [
+                  {
+                    index: 0,
+                    ...(fields.id !== undefined ? { id: fields.id } : {}),
+                    function: {
+                      ...(fields.name !== undefined
+                        ? { name: fields.name }
+                        : {}),
+                      ...(fields.arguments !== undefined
+                        ? { arguments: fields.arguments }
+                        : {}),
+                    },
+                  },
+                ],
+              },
+        finish_reason: fields.finishReason ?? null,
+      },
+    ],
+  };
+}
+
 afterEach(async () => {
   await Promise.allSettled(apps.splice(0).map((app) => app.close()));
 });
@@ -295,7 +336,84 @@ describe('POST /v1/responses', () => {
     expect(response.body).not.toContain('event: response.completed');
   });
 
-  it('rejects streaming function tools before calling the provider', async () => {
+  it('streams function-call output and preserves tool metadata', async () => {
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: true,
+      body: Readable.from([
+        sse(
+          functionStreamChunk({
+            id: 'call_1',
+            name: 'write_file',
+            arguments: '{"path":"',
+          }),
+        ),
+        sse(functionStreamChunk({ arguments: 'a.txt"}' })),
+        sse(functionStreamChunk({ finishReason: 'tool_calls' })),
+        sse('[DONE]'),
+      ]),
+    });
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        input: 'hello',
+        stream: true,
+        parallel_tool_calls: false,
+        tools: [
+          {
+            type: 'function',
+            name: 'write_file',
+            description: 'Write a file',
+            parameters: { type: 'object', properties: {} },
+          },
+        ],
+        tool_choice: { type: 'function', name: 'write_file' },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(createChatCompletion.mock.calls[0]?.[0]).toMatchObject({
+      model: 'coding',
+      stream: true,
+      stream_options: { include_usage: true },
+      parallel_tool_calls: false,
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'write_file',
+            description: 'Write a file',
+            parameters: { type: 'object', properties: {} },
+          },
+        },
+      ],
+      tool_choice: { type: 'function', function: { name: 'write_file' } },
+    });
+    expect(response.body).toContain(
+      'event: response.function_call_arguments.delta',
+    );
+    expect(response.body).toContain(
+      'event: response.function_call_arguments.done',
+    );
+    expect(response.body).toContain('"id":"fc_call_1_0"');
+    expect(response.body).toContain('"call_id":"call_1"');
+    expect(response.body).toContain('"name":"write_file"');
+    expect(response.body).toContain('"arguments":"{\\"path\\":\\"a.txt\\"}"');
+    expect(response.body).toContain('event: response.completed');
+    expect(response.body).not.toContain('[DONE]');
+  });
+
+  it('rejects named tool choice that is absent from tools', async () => {
     const createChatCompletion = vi.fn();
     const app = track(
       buildGateway({
@@ -313,19 +431,14 @@ describe('POST /v1/responses', () => {
         model: 'coding',
         input: 'hello',
         stream: true,
-        tools: [
-          {
-            type: 'function',
-            name: 'write_file',
-            parameters: { type: 'object', properties: {} },
-          },
-        ],
+        tools: [{ type: 'function', name: 'write_file' }],
+        tool_choice: { type: 'function', name: 'read_file' },
       },
     });
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
-      error: { code: 'unsupported_responses_feature' },
+      error: { code: 'invalid_request' },
     });
     expect(createChatCompletion).not.toHaveBeenCalled();
   });
