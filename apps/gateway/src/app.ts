@@ -35,6 +35,8 @@ export interface BuildGatewayOptions {
   readonly logger?: JsonLogger;
   readonly provider?: OpenAICompatibleProvider;
   readonly router?: GatewayRouterConfig;
+  readonly routedAccounts?: Readonly<Record<string, OpenAICompatibleProvider>>;
+  /** @deprecated Use routedAccounts. Preserved for version 1 integrations. */
   readonly routedProviders?: Readonly<Record<string, OpenAICompatibleProvider>>;
 }
 
@@ -90,6 +92,14 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     );
   }
 
+  if (options.routedAccounts && options.routedProviders) {
+    throw new GatewayHttpError(
+      500,
+      'conflicting_account_configuration',
+      'Routed clients cannot be supplied through both routedAccounts and routedProviders',
+    );
+  }
+
   const sensitiveValues = [
     config.token,
     ...(config.upstream?.apiKey ? [config.upstream.apiKey] : []),
@@ -97,6 +107,8 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   ];
   const logger = options.logger ?? createJsonLogger({ sensitiveValues });
   const models = [...(options.models ?? [])];
+  const routedAccountClients =
+    options.routedAccounts ?? options.routedProviders;
   const provider =
     options.provider ??
     (config.upstream
@@ -106,9 +118,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     ? new RoutedOpenAIProvider({
         config: options.router,
         logger,
-        ...(options.routedProviders
-          ? { providers: options.routedProviders }
-          : {}),
+        ...(routedAccountClients ? { accounts: routedAccountClients } : {}),
       })
     : undefined;
   const telemetry = new GatewayTelemetry();
@@ -192,6 +202,9 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   const routedProviderCount = options.router
     ? Object.keys(options.router.registry.providers).length
     : undefined;
+  const routedAccountCount = options.router
+    ? Object.keys(options.router.registry.accounts).length
+    : undefined;
   installUiRoutes(app, {
     telemetry,
     runtime: {
@@ -204,6 +217,9 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
         ...(config.upstream ? { baseUrl: config.upstream.baseUrl } : {}),
         ...(routedProviderCount !== undefined
           ? { providerCount: routedProviderCount }
+          : {}),
+        ...(routedAccountCount !== undefined
+          ? { accountCount: routedAccountCount }
           : {}),
         credentialConfigured: Boolean(
           config.upstream?.apiKey ||
@@ -277,6 +293,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
       if (routedResult) {
         reply.header('x-tony-router-route', routedResult.route.routeId);
         reply.header('x-tony-router-provider', routedResult.route.providerId);
+        reply.header('x-tony-router-account', routedResult.route.accountId);
         reply.header('x-tony-router-attempts', routedResult.attempts);
       }
 
