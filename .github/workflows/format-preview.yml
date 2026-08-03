@@ -1,0 +1,29 @@
+name: Format Preview
+
+on:
+  pull_request:
+    paths:
+      - 'apps/gateway/src/app.ts'
+      - 'apps/gateway/src/openai/responses.ts'
+      - 'apps/gateway/test/responses.test.ts'
+      - '.github/workflows/format-preview.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - name: Print Prettier patch
+        run: |
+          pnpm exec prettier --write apps/gateway/src/app.ts apps/gateway/src/openai/responses.ts apps/gateway/test/responses.test.ts
+          git diff -- apps/gateway/src/app.ts apps/gateway/src/openai/responses.ts apps/gateway/test/responses.test.ts
