@@ -80,7 +80,10 @@ Delivered text compatibility slices:
 - fallback allowed only before output, with routed identity headers preserved;
 - downstream disconnect propagation and terminal post-emission `error` events;
 - fail-closed validation for changed call IDs/names, malformed indices, unconfigured functions, ambiguous mixed deltas, and serial/parallel contract violations;
-- explicit rejection of image, hosted-tool, refusal/reasoning, stored, background, function-output submission, and chained-response features;
+- self-contained manual continuation with replayed assistant output, `function_call` items, and matching text-only `function_call_output` items;
+- deterministic translation to Chat Completions assistant `tool_calls` plus `tool` messages, including multiple parallel and sequential function-call turns;
+- rejection of orphan/duplicate/unresolved calls, duplicate outputs, incomplete statuses, message interleaving, and image/file tool outputs before provider invocation;
+- explicit rejection of image input, hosted-tool, refusal/reasoning, stored, background, and server-side `previous_response_id` chaining features;
 - gateway contracts for authentication, missing provider, JSON/SSE translation, routed fallback, no post-output replay, disconnect, malformed streams, and protocol mismatch.
 
 Remaining:
@@ -89,8 +92,8 @@ Remaining:
 - refusal and reasoning stream events;
 - structured-output validation and compatibility matrix;
 - additional Codex-style fixtures;
-- function-call output submission and response chaining;
-- optional stored/chained/background semantics only after their ownership and persistence boundaries are defined.
+- server-side `previous_response_id` chaining and response persistence;
+- optional stored/background semantics only after their ownership and persistence boundaries are defined.
 
 **Exit evidence**
 

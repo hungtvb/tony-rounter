@@ -100,6 +100,17 @@ function routerConfig(): GatewayRouterConfig {
   };
 }
 
+function toolHistoryRouterConfig(): GatewayRouterConfig {
+  const registry = parseRoutingConfig(
+    ROUTING_YAML.replace(
+      'tools: true\n      parallelToolCalls: true',
+      'tools: false\n      parallelToolCalls: false',
+    ),
+  );
+  const base = routerConfig();
+  return { ...base, registry };
+}
+
 class FakeProvider implements OpenAICompatibleProvider {
   readonly requests: ChatCompletionRequest[] = [];
 
@@ -260,6 +271,121 @@ describe('routed Responses text streaming', () => {
     expect(response.body).toContain('event: response.completed');
     expect(response.body).toContain('"model":"tony-auto"');
     expect(primary.requests).toHaveLength(1);
+    expect(backup.requests).toHaveLength(1);
+  });
+
+  it('routes self-contained function output continuation with fallback', async () => {
+    const primary = new FakeProvider(async () => {
+      throw new GatewayHttpError(
+        502,
+        'upstream_authentication_failed',
+        'credentials rejected',
+      );
+    });
+    const backup = new FakeProvider(async () =>
+      successfulStream('chatcmpl_backup_continuation', 'continued'),
+    );
+    const app = track(
+      buildGateway({
+        config: gatewayConfig(),
+        router: routerConfig(),
+        routedProviders: { primary, backup },
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await routedResponse(app, {
+      model: 'tony-auto',
+      stream: true,
+      input: [
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'write_file',
+          arguments: '{"path":"a.txt"}',
+          status: 'completed',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: '{"ok":true}',
+        },
+      ],
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['x-tony-router-route']).toBe('backup-route');
+    expect(response.headers['x-tony-router-provider']).toBe('backup');
+    expect(response.headers['x-tony-router-account']).toBe('backup');
+    expect(response.headers['x-tony-router-attempts']).toBe('2');
+    expect(response.body).toContain('event: response.completed');
+    expect(response.body).toContain('"model":"tony-auto"');
+    expect(primary.requests[0]).toMatchObject({
+      model: 'primary-upstream',
+      messages: [
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'write_file',
+                arguments: '{"path":"a.txt"}',
+              },
+            },
+          ],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: '{"ok":true}' },
+      ],
+    });
+    expect(backup.requests[0]).toMatchObject({
+      model: 'backup-upstream',
+      messages: primary.requests[0]?.messages,
+    });
+  });
+
+  it('skips models without tool capability for replayed tool history', async () => {
+    const primary = new FakeProvider(async () =>
+      successfulStream('chatcmpl_primary_incompatible', 'must not run'),
+    );
+    const backup = new FakeProvider(async () =>
+      successfulStream('chatcmpl_backup_compatible', 'continued'),
+    );
+    const app = track(
+      buildGateway({
+        config: gatewayConfig(),
+        router: toolHistoryRouterConfig(),
+        routedProviders: { primary, backup },
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await routedResponse(app, {
+      model: 'tony-auto',
+      stream: true,
+      input: [
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'write_file',
+          arguments: '{"path":"a.txt"}',
+          status: 'completed',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: '{"ok":true}',
+        },
+      ],
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['x-tony-router-route']).toBe('backup-route');
+    expect(response.headers['x-tony-router-provider']).toBe('backup');
+    expect(response.headers['x-tony-router-attempts']).toBe('1');
+    expect(primary.requests).toHaveLength(0);
     expect(backup.requests).toHaveLength(1);
   });
 

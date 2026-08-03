@@ -12,7 +12,7 @@ Implemented and verified:
 - generated local bearer token and redacted JSON logs
 - authenticated `GET /v1/models`
 - authenticated `POST /v1/chat/completions`
-- authenticated `POST /v1/responses` compatibility for text input and custom function tools across JSON and SSE streaming
+- authenticated `POST /v1/responses` compatibility for text input, custom function tools, and self-contained tool-result continuation across JSON and SSE streaming
 - non-streaming and validated SSE streaming proxy for Chat Completions
 - upstream timeout, disconnect propagation, redirect rejection, and normalized errors
 - versioned YAML routing registry
@@ -28,7 +28,7 @@ Implemented and verified:
 
 The Responses compatibility layer translates supported requests through the same routed Chat Completions runtime, preserving public model IDs and route/provider/account headers. Text and custom function-call streams are emitted as ordered Responses lifecycle events with monotonic sequence numbers. Function argument deltas are aggregated exactly into completed output items; malformed or truncated upstream data after output becomes a terminal `error` event and never triggers fallback after emission.
 
-Image input, hosted tools, refusal/reasoning events, background execution, stored responses, function-output submission, and response chaining are rejected explicitly until their protocol and ownership boundaries are implemented.
+Clients can complete a custom function loop without gateway persistence by resending prior assistant `message` / `function_call` items together with matching `function_call_output` items. Tony Router validates that every call ID has exactly one preceding call and one completed text output before forwarding the continuation. Server-side `previous_response_id`, image/file tool outputs, hosted tools, refusal/reasoning events, background execution, stored responses, and automatic tool execution remain explicitly unsupported.
 
 The routing engine lives in `@tony-router/core`; the Fastify gateway wires profiles to provider accounts and keeps public model IDs stable across JSON and SSE responses.
 
@@ -91,7 +91,37 @@ curl --no-buffer http://127.0.0.1:8787/v1/responses \
     "tool_choice": "required",
     "stream": true
   }'
+
+# After executing the returned function call, resend the completed call and output.
+curl --no-buffer http://127.0.0.1:8787/v1/responses \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4.1-mini",
+    "input": [
+      {
+        "type": "message",
+        "role": "user",
+        "content": "Write hello.txt."
+      },
+      {
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "write_file",
+        "arguments": "{\"path\":\"hello.txt\",\"content\":\"hello\"}",
+        "status": "completed"
+      },
+      {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": "{\"ok\":true}"
+      }
+    ],
+    "stream": true
+  }'
 ```
+
+This continuation mode is self-contained: include the prior assistant/function-call items needed by the model. `previous_response_id` is not accepted because Tony Router does not persist Responses state.
 
 See `.env.example` for all gateway settings. For multiple accounts, use `examples/router.yaml`, `docs/provider-accounts.md`, and the **Providers** page at `http://127.0.0.1:8787/ui#providers`. Set an absolute loopback-only `TONY_ROUTER_CONTROL_DIR` to enable validated atomic apply and rollback without storing provider keys.
 

@@ -229,6 +229,125 @@ describe('POST /v1/responses', () => {
     });
   });
 
+  it('submits completed function output as non-streaming chat history', async () => {
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: false,
+      body: {
+        id: 'chatcmpl_continuation',
+        created: 124,
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'The file was written.' },
+            finish_reason: 'stop',
+          },
+        ],
+      },
+    });
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        input: [
+          { type: 'message', role: 'user', content: 'Write a.txt.' },
+          {
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'write_file',
+            arguments: '{"path":"a.txt","content":"hello"}',
+            status: 'completed',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: '{"ok":true}',
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(createChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createChatCompletion.mock.calls[0]?.[0]).toEqual({
+      model: 'coding',
+      messages: [
+        { role: 'user', content: 'Write a.txt.' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'write_file',
+                arguments: '{"path":"a.txt","content":"hello"}',
+              },
+            },
+          ],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: '{"ok":true}' },
+      ],
+      stream: false,
+    });
+    expect(response.json()).toMatchObject({
+      id: 'chatcmpl_continuation',
+      object: 'response',
+      model: 'coding',
+      output: [
+        {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'The file was written.' }],
+        },
+      ],
+    });
+  });
+
+  it('rejects incomplete function history before calling the provider', async () => {
+    const createChatCompletion = vi.fn();
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        input: [
+          {
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'write_file',
+            arguments: '{}',
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: { code: 'invalid_request' },
+    });
+    expect(createChatCompletion).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed generation controls before calling the provider', async () => {
     const createChatCompletion = vi.fn();
     const app = track(
@@ -308,6 +427,75 @@ describe('POST /v1/responses', () => {
     expect(response.body).toContain('"tool_choice":"none"');
     expect(response.body).not.toContain('[DONE]');
     expect(response.body).not.toContain('event: error');
+  });
+
+  it('streams a continuation after completed function output', async () => {
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: true,
+      body: Readable.from([
+        sse(streamChunk('Done')),
+        sse(streamChunk(null, 'stop')),
+        sse('[DONE]'),
+      ]),
+    });
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        stream: true,
+        input: [
+          {
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'write_file',
+            arguments: '{"path":"a.txt"}',
+            status: 'completed',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: 'written',
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(createChatCompletion.mock.calls[0]?.[0]).toEqual({
+      model: 'coding',
+      messages: [
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'write_file',
+                arguments: '{"path":"a.txt"}',
+              },
+            },
+          ],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: 'written' },
+      ],
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+    expect(response.body).toContain('event: response.output_text.delta');
+    expect(response.body).toContain('event: response.completed');
+    expect(response.body).toContain('"text":"Done"');
   });
 
   it('returns an error event when a streaming upstream fails after output', async () => {

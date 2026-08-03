@@ -38,8 +38,34 @@ function hasStructuredOutput(responseFormat: unknown): boolean {
   );
 }
 
-function hasTools(tools: unknown): boolean {
+function hasConfiguredTools(tools: unknown): boolean {
   return Array.isArray(tools) && tools.length > 0;
+}
+
+function toolHistory(messages: unknown): Readonly<{
+  hasTools: boolean;
+  hasParallelToolCalls: boolean;
+}> {
+  if (!Array.isArray(messages)) {
+    return Object.freeze({ hasTools: false, hasParallelToolCalls: false });
+  }
+
+  let historyHasTools = false;
+  let historyHasParallelToolCalls = false;
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    if (message.role === 'tool') historyHasTools = true;
+    if (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
+      continue;
+    }
+    historyHasTools = true;
+    if (message.tool_calls.length > 1) historyHasParallelToolCalls = true;
+  }
+
+  return Object.freeze({
+    hasTools: historyHasTools,
+    hasParallelToolCalls: historyHasParallelToolCalls,
+  });
 }
 
 export function deriveChatRequestCapabilities(
@@ -47,12 +73,14 @@ export function deriveChatRequestCapabilities(
   options: ChatCapabilityOptions = {},
 ): RequiredCapabilities {
   const input = isRecord(request) ? request : {};
-  const requestHasTools = hasTools(input.tools);
+  const history = toolHistory(input.messages);
+  const requestHasTools = hasConfiguredTools(input.tools) || history.hasTools;
 
   return deriveRequiredCapabilities({
     hasTools: requestHasTools,
     allowsParallelToolCalls:
-      requestHasTools && input.parallel_tool_calls === true,
+      history.hasParallelToolCalls ||
+      (requestHasTools && input.parallel_tool_calls === true),
     hasImageInput: hasImageInput(input.messages),
     hasStructuredOutput: hasStructuredOutput(input.response_format),
     ...(options.estimatedInputTokens !== undefined
