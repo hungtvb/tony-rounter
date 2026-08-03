@@ -37,7 +37,10 @@ new = """  async createChatCompletion(
     };
   }"""
 assert text.count(old) == 1
-routed.write_text(text.replace(old, new, 1))
+text = text.replace(old, new, 1)
+old = "    expect(response.body).not.toContain('backup-upstream');\n"
+assert text.count(old) == 1
+routed.write_text(text.replace(old, '', 1))
 
 core = Path('apps/gateway/test/openai-core.test.ts')
 text = core.read_text()
