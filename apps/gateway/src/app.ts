@@ -17,6 +17,9 @@ import {
 } from './openai/client.js';
 import { parseChatCompletionRequest } from './openai/protocol.js';
 import { createRequestAbortContext } from './request-abort.js';
+import type { GatewayRouterConfig } from './routing/config.js';
+import { routerSensitiveValues } from './routing/config.js';
+import { RoutedOpenAIProvider } from './routing/provider.js';
 import { GatewayTelemetry } from './telemetry.js';
 import { installUiRoutes, type UiProviderMode } from './ui.js';
 
@@ -31,6 +34,8 @@ export interface BuildGatewayOptions {
   readonly models?: readonly GatewayModel[];
   readonly logger?: JsonLogger;
   readonly provider?: OpenAICompatibleProvider;
+  readonly router?: GatewayRouterConfig;
+  readonly routedProviders?: Readonly<Record<string, OpenAICompatibleProvider>>;
 }
 
 function requestPath(request: FastifyRequest): string {
@@ -38,19 +43,57 @@ function requestPath(request: FastifyRequest): string {
 }
 
 function providerMode(
+  routed: RoutedOpenAIProvider | undefined,
   provider: OpenAICompatibleProvider | undefined,
   models: readonly GatewayModel[],
 ): UiProviderMode {
+  if (routed) return 'routed';
   if (provider) return 'openai-compatible';
   if (models.length > 0) return 'static-registry';
   return 'unconfigured';
 }
 
+function singleHeader(
+  request: FastifyRequest,
+  name: string,
+): string | undefined {
+  const value = request.headers[name];
+  if (value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    throw new GatewayHttpError(
+      400,
+      'invalid_router_header',
+      `${name} must be supplied at most once`,
+    );
+  }
+  return value;
+}
+
+function replaySafe(request: FastifyRequest): boolean {
+  const value = singleHeader(request, 'x-tony-router-replay-safe');
+  if (value === undefined || value === 'false') return false;
+  if (value === 'true') return true;
+  throw new GatewayHttpError(
+    400,
+    'invalid_router_header',
+    'x-tony-router-replay-safe must be either true or false',
+  );
+}
+
 export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   const { config } = options;
+  if (options.router && (options.provider || config.upstream)) {
+    throw new GatewayHttpError(
+      500,
+      'conflicting_provider_configuration',
+      'Routed and legacy provider modes cannot be enabled together',
+    );
+  }
+
   const sensitiveValues = [
     config.token,
     ...(config.upstream?.apiKey ? [config.upstream.apiKey] : []),
+    ...routerSensitiveValues(options.router),
   ];
   const logger = options.logger ?? createJsonLogger({ sensitiveValues });
   const models = [...(options.models ?? [])];
@@ -59,6 +102,15 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     (config.upstream
       ? new OpenAICompatibleClient(config.upstream, logger)
       : undefined);
+  const routed = options.router
+    ? new RoutedOpenAIProvider({
+        config: options.router,
+        logger,
+        ...(options.routedProviders
+          ? { providers: options.routedProviders }
+          : {}),
+      })
+    : undefined;
   const telemetry = new GatewayTelemetry();
 
   const app = Fastify({
@@ -137,6 +189,9 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     ),
   );
 
+  const routedProviderCount = options.router
+    ? Object.keys(options.router.registry.providers).length
+    : undefined;
   installUiRoutes(app, {
     telemetry,
     runtime: {
@@ -145,9 +200,14 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
       port: config.port,
       tokenSource: config.tokenSource,
       provider: {
-        mode: providerMode(provider, models),
+        mode: providerMode(routed, provider, models),
         ...(config.upstream ? { baseUrl: config.upstream.baseUrl } : {}),
-        credentialConfigured: Boolean(config.upstream?.apiKey),
+        ...(routedProviderCount !== undefined
+          ? { providerCount: routedProviderCount }
+          : {}),
+        credentialConfigured: Boolean(
+          config.upstream?.apiKey || routerSensitiveValues(options.router).length,
+        ),
       },
     },
   });
@@ -159,6 +219,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   }));
 
   app.get('/v1/models', async (request, reply) => {
+    if (routed) return routed.listModels();
     if (!provider) {
       return {
         object: 'list',
@@ -183,7 +244,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
   });
 
   app.post('/v1/chat/completions', async (request, reply) => {
-    if (!provider) {
+    if (!provider && !routed) {
       throw new GatewayHttpError(
         503,
         'provider_not_configured',
@@ -196,10 +257,27 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     let streaming = false;
 
     try {
-      const result = await provider.createChatCompletion(chatRequest, {
-        requestId: request.id,
-        signal: abortContext.signal,
-      });
+      const sessionId = singleHeader(request, 'x-tony-router-session');
+      const routedResult = routed
+        ? await routed.createChatCompletion(chatRequest, {
+            requestId: request.id,
+            signal: abortContext.signal,
+            replaySafe: replaySafe(request),
+            ...(sessionId ? { sessionId } : {}),
+          })
+        : undefined;
+      const result = routedResult
+        ? routedResult.result
+        : await provider!.createChatCompletion(chatRequest, {
+            requestId: request.id,
+            signal: abortContext.signal,
+          });
+
+      if (routedResult) {
+        reply.header('x-tony-router-route', routedResult.route.routeId);
+        reply.header('x-tony-router-provider', routedResult.route.providerId);
+        reply.header('x-tony-router-attempts', routedResult.attempts);
+      }
 
       if (!result.stream) return result.body;
 
