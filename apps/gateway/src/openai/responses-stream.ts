@@ -9,6 +9,7 @@ export interface ResponsesTextStreamOptions {
   readonly parallelToolCalls?: boolean;
   readonly temperature?: number;
   readonly topP?: number;
+  readonly toolChoice?: 'auto' | 'none';
   readonly nowSeconds?: () => number;
 }
 
@@ -322,7 +323,7 @@ export class ResponsesTextStreamEncoder {
       store: false,
       temperature: this.#options.temperature ?? 1,
       text: { format: { type: 'text' } },
-      tool_choice: 'auto',
+      tool_choice: this.#options.toolChoice ?? 'auto',
       tools: [],
       top_p: this.#options.topP ?? 1,
       truncation: 'disabled',

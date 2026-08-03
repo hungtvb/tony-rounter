@@ -41,6 +41,7 @@ describe('ResponsesTextStreamEncoder', () => {
       parallelToolCalls: false,
       temperature: 0.5,
       topP: 0.8,
+      toolChoice: 'none',
       nowSeconds: () => 456,
     });
 
@@ -92,6 +93,7 @@ describe('ResponsesTextStreamEncoder', () => {
         parallel_tool_calls: false,
         temperature: 0.5,
         top_p: 0.8,
+        tool_choice: 'none',
         output: [
           {
             id: 'msg_chatcmpl_stream_123',

@@ -374,6 +374,10 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
           ...(responsesRequest.top_p !== undefined
             ? { topP: responsesRequest.top_p }
             : {}),
+          ...(responsesRequest.tool_choice === 'none' ||
+          responsesRequest.tool_choice === 'auto'
+            ? { toolChoice: responsesRequest.tool_choice }
+            : {}),
         });
         const cleanup = (): void => abortContext.cleanup();
         body.once('end', cleanup);

@@ -165,6 +165,7 @@ describe('POST /v1/responses', () => {
       ],
       stream: false,
       max_completion_tokens: 20,
+      tool_choice: 'none',
     });
     expect(response.json()).toMatchObject({
       id: 'chatcmpl_gateway',
@@ -242,6 +243,7 @@ describe('POST /v1/responses', () => {
         instructions: 'Be concise.',
         input: 'Say hello.',
         max_output_tokens: 20,
+        tool_choice: 'none',
         stream: true,
       },
     });
@@ -262,6 +264,7 @@ describe('POST /v1/responses', () => {
     expect(response.body).toContain('event: response.output_text.delta');
     expect(response.body).toContain('event: response.completed');
     expect(response.body).toContain('"text":"Hello"');
+    expect(response.body).toContain('"tool_choice":"none"');
     expect(response.body).not.toContain('[DONE]');
     expect(response.body).not.toContain('event: error');
   });
