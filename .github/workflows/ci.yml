@@ -41,12 +41,14 @@ jobs:
           set -euo pipefail
           python .github/phase4-public-model.py
           python -c 'from pathlib import Path; p=Path("apps/gateway/src/openai/client.ts"); s=p.read_text(); old="""canonicalEvents(\n          decoder.push(byteChunk(chunk.value)),\n          state,\n        )"""; new="""canonicalEvents(\n          decoder.push(byteChunk(chunk.value)),\n          state,\n          responseModel,\n        )"""; assert s.count(old) == 1; p.write_text(s.replace(old, new, 1))'
+          python .github/phase4-public-model-tests.py
 
       - name: Restore standard CI and remove temporary files
         shell: bash
         run: |
           set -euo pipefail
           rm -f .github/phase4-public-model.py
+          rm -f .github/phase4-public-model-tests.py
           rm -f .github/workflows/chatgpt-phase4-public-model.yml
           git checkout origin/main -- .github/workflows/ci.yml
           pnpm format
