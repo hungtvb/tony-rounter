@@ -15,6 +15,8 @@ export TONY_ROUTER_CONTROL_DIR="$HOME/.tony-router/control"
 pnpm --filter @tony-router/gateway start
 ```
 
+Use a dedicated directory owned and writable only by the local account running Tony Router. The directory stores routing generations and integrity metadata, not provider API keys.
+
 Managed control mode is mutually exclusive with legacy `TONY_ROUTER_UPSTREAM_*` settings and explicit `TONY_ROUTER_ROUTING_CONFIG_FILE` / `TONY_ROUTER_PROVIDER_CONFIG_FILE` paths. The dashboard never accepts a provider API key. Provider bindings contain only `apiKeyEnv`; the real credential remains in the process environment.
 
 ## Provider and account inventory
