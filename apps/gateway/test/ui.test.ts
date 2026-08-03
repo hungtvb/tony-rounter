@@ -185,6 +185,9 @@ describe('local runtime dashboard', () => {
     expect(response.body).toContain('Providers &amp; Accounts');
     expect(response.body).toContain('Environment-only setup');
     expect(response.body).toContain('routingConfigOutput');
+    expect(response.body).toContain('validateSetupButton');
+    expect(response.body).toContain('applySetupButton');
+    expect(response.body).toContain('generationList');
     expect(response.body).toContain('/ui/styles.css');
     expect(response.body).toContain('/ui/app.js');
     expect(response.body).not.toContain(TOKEN);
@@ -205,6 +208,8 @@ describe('local runtime dashboard', () => {
     expect(styles.body).toContain('.dashboard-grid');
     expect(styles.body).toContain('.providers-layout');
     expect(styles.body).toContain('.provider-account-row');
+    expect(styles.body).toContain('.control-history');
+    expect(styles.body).toContain('.generation-row');
     expect(styles.body).not.toContain(TOKEN);
 
     expect(script.statusCode).toBe(200);
@@ -218,6 +223,10 @@ describe('local runtime dashboard', () => {
     expect(script.body).toContain('function renderProviders()');
     expect(script.body).toContain('function generateSetupConfiguration()');
     expect(script.body).toContain('data-setup-provider');
+    expect(script.body).toContain('function validateSetupLocally()');
+    expect(script.body).toContain('function applySetupLocally()');
+    expect(script.body).toContain('function loadControlGenerations()');
+    expect(script.body).toContain('data-health-account');
     expect(script.body).not.toContain(TOKEN);
   });
 
@@ -274,6 +283,12 @@ describe('local runtime dashboard', () => {
         mode: 'openai-compatible',
         baseUrl: 'https://api.example.test/v1',
         credentialConfigured: true,
+      },
+      control: {
+        enabled: false,
+        status: 'disabled',
+        restartRequired: false,
+        generationCount: 0,
       },
       telemetry: {
         requestsSinceStart: 0,

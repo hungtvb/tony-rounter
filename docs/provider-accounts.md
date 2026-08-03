@@ -95,3 +95,9 @@ Successful routed responses expose:
 - `x-tony-router-account`: selected credential account ID
 - `x-tony-router-route`: selected route ID
 - `x-tony-router-attempts`: bounded attempt count
+
+## Managed local apply
+
+When Tony Router starts on loopback with an absolute `TONY_ROUTER_CONTROL_DIR`, the Providers page can validate and atomically apply generated routing and binding sources. Each apply creates an immutable, hash-verified generation and switches one active pointer. The gateway does not hot-reload; export all referenced credential variables and restart to load the new generation. Previous valid generations remain available for rollback.
+
+Account health actions use the credentials already loaded by the running gateway and return only bounded status categories, latency, timestamp, and optional HTTP status class. They never return response bodies, raw upstream errors, authorization headers, or API keys.

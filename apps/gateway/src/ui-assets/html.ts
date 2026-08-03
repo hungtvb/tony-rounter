@@ -156,6 +156,10 @@ export const UI_HTML = String.raw`<!doctype html>
                   <label for="setupProfileId"><span>Public profile / model ID</span><input id="setupProfileId" value="tony-auto" autocomplete="off" spellcheck="false"></label>
                 </div>
                 <button class="button button-primary button-full setup-generate-button" id="generateSetupButton" type="button">Generate starter files</button>
+                <div class="setup-action-row">
+                  <button class="button button-secondary" id="validateSetupButton" type="button">Validate locally</button>
+                  <button class="button button-primary" id="applySetupButton" type="button">Apply &amp; create backup</button>
+                </div>
                 <p class="setup-validation" id="setupValidation" role="status" aria-live="polite">Ready to generate configuration.</p>
 
                 <div class="config-output-stack">
@@ -168,7 +172,12 @@ export const UI_HTML = String.raw`<!doctype html>
                     <pre id="providerBindingOutput" tabindex="0">Generate a starter configuration.</pre>
                   </section>
                 </div>
-                <div class="setup-next-step"><span class="tiny-dot"></span><p>Save both files, export the named API key variable, set the two <code>TONY_ROUTER_*_CONFIG_FILE</code> paths, then restart the gateway.</p></div>
+                <div class="setup-next-step"><span class="tiny-dot"></span><p id="setupNextStepText">Save both files, export the named API key variable, set the two <code>TONY_ROUTER_*_CONFIG_FILE</code> paths, then restart the gateway.</p></div>
+                <section class="control-history" aria-labelledby="controlHistoryHeading">
+                  <div class="control-history-head"><div><span class="eyebrow">LOCAL CONTROL</span><h4 id="controlHistoryHeading">Applied generations</h4></div><span class="health-badge is-muted" id="controlModeBadge">Disabled</span></div>
+                  <p id="controlStateText">Set <code>TONY_ROUTER_CONTROL_DIR</code> on loopback to enable atomic apply and rollback.</p>
+                  <div class="generation-list" id="generationList"><div class="empty-state"><strong>Local control disabled</strong><small>Generated files can still be copied and applied manually.</small></div></div>
+                </section>
               </div>
             </article>
           </div>

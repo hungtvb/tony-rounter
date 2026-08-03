@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, open, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1']);
 const LOCAL_UPSTREAM_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
@@ -31,6 +31,7 @@ export interface GatewayConfig {
   readonly requestTimeoutMs: number;
   readonly shutdownGraceMs: number;
   readonly upstream?: OpenAIUpstreamConfig;
+  readonly controlDir?: string;
   readonly version: string;
 }
 
@@ -160,6 +161,42 @@ function loadUpstreamConfig(
   });
 }
 
+function loadControlDirectory(
+  env: NodeJS.ProcessEnv,
+  host: string,
+): string | undefined {
+  const value = env.TONY_ROUTER_CONTROL_DIR?.trim();
+  if (!value) return undefined;
+  if (value.length > 4096 || !isAbsolute(value)) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_CONTROL_DIR must be an absolute local path',
+    );
+  }
+  if (!LOOPBACK_HOSTS.has(host)) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_CONTROL_DIR is allowed only when the gateway binds to loopback',
+    );
+  }
+  if (
+    env.TONY_ROUTER_ROUTING_CONFIG_FILE !== undefined ||
+    env.TONY_ROUTER_PROVIDER_CONFIG_FILE !== undefined
+  ) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_CONTROL_DIR cannot be mixed with explicit routed config file paths',
+    );
+  }
+  if (
+    env.TONY_ROUTER_UPSTREAM_BASE_URL !== undefined ||
+    env.TONY_ROUTER_UPSTREAM_API_KEY !== undefined ||
+    env.TONY_ROUTER_UPSTREAM_TIMEOUT_MS !== undefined
+  ) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_CONTROL_DIR cannot be mixed with legacy upstream settings',
+    );
+  }
+  return resolve(value);
+}
+
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;
   try {
@@ -224,6 +261,7 @@ export async function loadGatewayConfig(
         source: 'environment' as const,
       }
     : await loadOrCreateToken(tokenFile);
+  const controlDir = loadControlDirectory(env, host);
   const upstream = loadUpstreamConfig(env);
 
   return Object.freeze({
@@ -261,6 +299,7 @@ export async function loadGatewayConfig(
       60_000,
     ),
     ...(upstream ? { upstream } : {}),
+    ...(controlDir ? { controlDir } : {}),
     version: '0.2.0',
   });
 }

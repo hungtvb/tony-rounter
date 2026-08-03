@@ -45,6 +45,7 @@ export const UI_JS_PART_4 = String.raw`      elements.recentRequestList.append(e
   async function loadDashboard() {
     if (!state.token) {
       state.dashboard = null;
+      state.generations = [];
       renderMetrics();
       renderRequests();
       return false;
@@ -89,6 +90,7 @@ export const UI_JS_PART_4 = String.raw`      elements.recentRequestList.append(e
   async function refreshProtected() {
     if (!state.token) return false;
     await loadDashboard();
+    await loadControlGenerations();
     try {
       await loadModels();
     } catch (error) {

@@ -1,6 +1,17 @@
 export { buildGateway } from './app.js';
 export type { BuildGatewayOptions, GatewayModel } from './app.js';
 export { GatewayConfigError, loadGatewayConfig } from './config.js';
+export {
+  LocalConfigStore,
+  LocalConfigStoreError,
+  loadManagedRouterSources,
+} from './control/config-store.js';
+export type {
+  ControlApplyResult,
+  ControlGenerationSummary,
+  ControlValidationSummary,
+  ManagedRouterSources,
+} from './control/config-store.js';
 export type {
   GatewayConfig,
   LoadGatewayConfigOptions,
@@ -29,16 +40,21 @@ export type {
 export {
   GatewayRouterConfigError,
   loadGatewayRouterConfig,
+  parseGatewayRouterSources,
   routerSensitiveValues,
 } from './routing/config.js';
 export type {
   GatewayRouterConfig,
   LoadGatewayRouterConfigOptions,
+  ParseGatewayRouterSourcesOptions,
+  ParsedGatewayRouterSources,
   RoutedAccountConfig,
   RoutedProviderConfig,
 } from './routing/config.js';
 export { RoutedOpenAIProvider } from './routing/provider.js';
 export type {
+  AccountHealthProbeResult,
+  AccountHealthStatus,
   RoutedChatCompletionResult,
   RoutedChatRequestContext,
   RoutedOpenAIProviderOptions,

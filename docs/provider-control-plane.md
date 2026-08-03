@@ -1,34 +1,76 @@
 # Provider control plane
 
-Tony Router exposes a local provider-first setup and inspection surface at:
+Tony Router exposes a local provider-first setup and operations surface at:
 
 ```text
 http://127.0.0.1:8787/ui#providers
 ```
 
-## What it shows
+## Trust boundary
 
-After local bearer authentication, the page reads the protected `/ui/api/dashboard` payload and renders:
+The browser remains an untrusted presentation surface. Every dashboard and control API is bearer-protected, and trusted config mutation is available only when the gateway binds to loopback and starts with an explicit absolute directory:
 
-- provider adapters and their normalized base URLs;
-- accounts grouped under their owning provider;
-- account-specific endpoint and timeout overrides;
+```bash
+export TONY_ROUTER_CONTROL_DIR="$HOME/.tony-router/control"
+pnpm --filter @tony-router/gateway start
+```
+
+Use a dedicated directory owned and writable only by the local account running Tony Router. The directory stores routing generations and integrity metadata, not provider API keys.
+
+Managed control mode is mutually exclusive with legacy `TONY_ROUTER_UPSTREAM_*` settings and explicit `TONY_ROUTER_ROUTING_CONFIG_FILE` / `TONY_ROUTER_PROVIDER_CONFIG_FILE` paths. The dashboard never accepts a provider API key. Provider bindings contain only `apiKeyEnv`; the real credential remains in the process environment.
+
+## Provider and account inventory
+
+After local bearer authentication, `/ui/api/dashboard` renders:
+
+- provider adapters and normalized endpoints;
+- accounts grouped under their provider;
+- account endpoint and timeout overrides;
 - safe credential status (`Key loaded` or `No key loaded`);
 - provider, account, profile, model, and route counts;
-- deterministic empty states for legacy upstream, static registry, and unconfigured modes.
+- local-control state, active generation, and restart requirement.
 
-The payload does not include API keys, bearer tokens, authorization headers, prompts, or raw upstream errors. Browser rendering uses DOM text nodes rather than injecting configuration as HTML.
+The payload excludes API keys, gateway bearer tokens, authorization headers, prompts, response bodies, and raw upstream errors. Browser rendering uses DOM text nodes instead of configuration HTML injection.
 
-## Add-account setup assistant
+## Validate and apply
 
-The assistant generates two starter files:
+The assistant generates:
 
-1. `router.yaml` — routing configuration version 2 with provider, account, model, route, and public profile.
-2. `providers.json` — provider defaults and account binding using `apiKeyEnv`.
+1. `router.yaml` — routing configuration version 2.
+2. `providers.json` — provider defaults and account bindings using `apiKeyEnv`.
 
-The form validates identifiers, HTTPS requirements for remote providers, timeout bounds, environment-variable syntax, and upstream model length. It never asks for the API key itself.
+With managed control enabled, the dashboard can validate and atomically apply the pair. Apply performs these steps:
 
-Apply the generated configuration manually:
+1. parse and cross-validate both files before writing;
+2. reject raw keys, unknown fields, oversized input, unsafe remote HTTP, and dangling identities;
+3. write an immutable generation under `generations/<generation-id>`;
+4. fsync the generation files and directory where supported;
+5. switch one `active.json` pointer by atomic rename;
+6. retain bounded previous generations for rollback.
+
+A successful apply does not hot-reload the running router. It returns `restartRequired: true`. Export all environment variables named by `apiKeyEnv`, then restart Tony Router. Startup reads only the active generation and strictly requires referenced credentials.
+
+## Rollback and recovery
+
+Rollback validates the target generation, verifies SHA-256 hashes, reparses the routing/provider pair, and switches only the active pointer. Corrupt or partial generation directories are omitted and cannot be activated. The gateway must be restarted after rollback.
+
+No existing generation is overwritten. An invalid candidate leaves the previous active pointer unchanged.
+
+## Account health probes
+
+Each routed account exposes a bounded health action. A probe calls the account's OpenAI-compatible model-list endpoint using the credential already loaded by the gateway. The dashboard receives only:
+
+- account and provider IDs;
+- status category such as `healthy`, `authentication_failed`, `rate_limited`, `timeout`, or `unavailable`;
+- latency;
+- timestamp;
+- optional HTTP status class (`4xx` or `5xx`).
+
+Response bodies, provider request IDs, authorization headers, credentials, and raw provider messages are not returned. Probes do not change route affinity or circuit-breaker state.
+
+## Manual mode
+
+Without `TONY_ROUTER_CONTROL_DIR`, generation, copy, and manual application remain available:
 
 ```bash
 export OPENAI_PERSONAL_KEY='your-provider-key'
@@ -37,21 +79,12 @@ export TONY_ROUTER_PROVIDER_CONFIG_FILE=/absolute/path/providers.json
 pnpm --filter @tony-router/gateway start
 ```
 
-Use the environment variable name generated by the assistant rather than copying the example literally.
-
-## Verification
-
-Provider inventory and setup-assistant changes are covered by the gateway UI contract tests and the repository-wide `pnpm verify` gate.
-
 ## Current boundary
 
-This phase is intentionally read-only. It does not:
+This phase does not implement:
 
-- persist or reveal provider credentials;
-- edit active configuration files;
-- hot-reload the gateway;
-- implement OAuth/device authorization;
-- integrate an operating-system credential vault;
-- track provider quota or cost.
-
-Those capabilities require a separate trusted local persistence and credential-management boundary.
+- provider credential persistence or an OS credential vault;
+- OAuth/device authorization;
+- automatic process restart or hot reload;
+- quota or cost accounting;
+- a hosted multi-user control plane.

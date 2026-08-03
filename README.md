@@ -22,6 +22,8 @@ Implemented and verified:
 - first-class provider accounts with routing/binding configuration version 2 and version 1 compatibility
 - local control-plane dashboard with protected provider/account inventory, models, traces, and chat playground
 - environment-only provider setup assistant that generates starter files without collecting raw API keys
+- optional loopback-only managed config generations with atomic apply, hash-verified rollback, and restart-required state
+- bounded per-account health probes that return status categories and latency without raw provider responses
 
 The routing engine lives in `@tony-router/core`; the Fastify gateway wires profiles to provider accounts and keeps public model IDs stable across JSON and SSE responses.
 
@@ -63,7 +65,7 @@ curl http://127.0.0.1:8787/v1/chat/completions \
   }'
 ```
 
-See `.env.example` for all gateway settings. For multiple accounts, use `examples/router.yaml`, `docs/provider-accounts.md`, and the **Providers** page at `http://127.0.0.1:8787/ui#providers`.
+See `.env.example` for all gateway settings. For multiple accounts, use `examples/router.yaml`, `docs/provider-accounts.md`, and the **Providers** page at `http://127.0.0.1:8787/ui#providers`. Set an absolute loopback-only `TONY_ROUTER_CONTROL_DIR` to enable validated atomic apply and rollback without storing provider keys.
 
 ## Routing core
 
