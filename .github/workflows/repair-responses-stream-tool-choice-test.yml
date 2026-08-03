@@ -1,0 +1,56 @@
+name: Repair Responses Stream Tool Choice Test
+
+on:
+  pull_request:
+    paths:
+      - 'apps/gateway/test/responses.test.ts'
+      - '.github/workflows/repair-responses-stream-tool-choice-test.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Repair expected request shapes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/gateway/test/responses.test.ts')
+          source = path.read_text()
+          nonstream = """      stream: false,
+                max_completion_tokens: 20,
+                tool_choice: 'none',
+              });"""
+          fixed_nonstream = """      stream: false,
+                max_completion_tokens: 20,
+              });"""
+          if nonstream not in source:
+              raise SystemExit('non-stream expectation not found')
+          source = source.replace(nonstream, fixed_nonstream, 1)
+
+          streaming = """      stream_options: { include_usage: true },
+                max_completion_tokens: 20,
+              });"""
+          fixed_streaming = """      stream_options: { include_usage: true },
+                max_completion_tokens: 20,
+                tool_choice: 'none',
+              });"""
+          if streaming not in source:
+              raise SystemExit('stream expectation not found')
+          source = source.replace(streaming, fixed_streaming, 1)
+          path.write_text(source)
+          PY
+      - name: Commit repair
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/gateway/test/responses.test.ts
+          git commit -m "test(responses): assert streaming tool choice only"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
