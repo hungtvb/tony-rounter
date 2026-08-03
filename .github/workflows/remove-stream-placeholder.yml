@@ -1,0 +1,42 @@
+name: Remove Stream Placeholder
+
+on:
+  pull_request:
+    paths:
+      - 'apps/gateway/src/app.ts'
+      - '.github/workflows/remove-stream-placeholder.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Remove placeholder
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/gateway/src/app.ts')
+          source = path.read_text()
+          block = """function installStreamingHeaders(reply: Parameters<FastifyInstance['post']>[1] extends never ? never : never): never {
+            return reply;
+          }
+
+          """
+          if block not in source:
+              raise SystemExit('placeholder block not found')
+          path.write_text(source.replace(block, ''))
+          PY
+      - name: Commit cleanup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/gateway/src/app.ts
+          git commit -m "fix(responses): remove stream wiring placeholder"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
