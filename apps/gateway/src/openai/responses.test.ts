@@ -49,6 +49,140 @@ describe('Responses API protocol translation', () => {
     ]);
   });
 
+  it('translates mixed text and image input in original order', () => {
+    const translated = responsesToChatCompletion(
+      parseResponsesRequest({
+        model: 'coding',
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [
+              { type: 'input_text', text: 'Describe ' },
+              {
+                type: 'input_image',
+                image_url: 'https://images.example.test/cat.png?sig=abc',
+                detail: 'high',
+              },
+              { type: 'input_text', text: ' precisely.' },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(translated.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Describe ' },
+          {
+            type: 'image_url',
+            image_url: {
+              url: 'https://images.example.test/cat.png?sig=abc',
+              detail: 'high',
+            },
+          },
+          { type: 'text', text: ' precisely.' },
+        ],
+      },
+    ]);
+  });
+
+  it('accepts image-only data URL input and defaults detail to auto', () => {
+    const image = 'data:image/png;base64,iVBORw0KGgo=';
+    const translated = responsesToChatCompletion(
+      parseResponsesRequest({
+        model: 'coding',
+        input: [
+          {
+            role: 'user',
+            content: [{ type: 'input_image', image_url: image }],
+          },
+        ],
+      }),
+    );
+
+    expect(translated.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: image, detail: 'auto' },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('accepts nullable file_id alongside an image URL', () => {
+    const translated = responsesToChatCompletion(
+      parseResponsesRequest({
+        model: 'coding',
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_image',
+                file_id: null,
+                image_url: 'https://images.example.test/cat.png',
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(translated.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: {
+              url: 'https://images.example.test/cat.png',
+              detail: 'auto',
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('accepts every supported image data URL signature', () => {
+    const images = [
+      'data:image/png;base64,iVBORw0KGgo=',
+      'data:image/jpeg;base64,/9j/4A==',
+      'data:image/gif;base64,R0lGODlh',
+      'data:image/webp;base64,UklGRgAAAABXRUJQ',
+    ];
+
+    for (const image of images) {
+      const translated = responsesToChatCompletion(
+        parseResponsesRequest({
+          model: 'coding',
+          input: [
+            {
+              role: 'user',
+              content: [{ type: 'input_image', image_url: image }],
+            },
+          ],
+        }),
+      );
+
+      expect(translated.messages[0]).toMatchObject({
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: image, detail: 'auto' },
+          },
+        ],
+      });
+    }
+  });
+
   it('replays assistant output, function calls, and tool results as chat history', () => {
     const translated = responsesToChatCompletion(
       parseResponsesRequest({
@@ -533,25 +667,127 @@ describe('Responses API protocol translation', () => {
     ).toThrowError(/duplicated/);
   });
 
-  it('rejects image input rather than silently dropping capability requirements', () => {
-    expect(() =>
-      responsesToChatCompletion(
-        parseResponsesRequest({
-          model: 'coding',
-          input: [
+  it('rejects unsupported or malformed image input', () => {
+    const invalidInputs = [
+      [{ role: 'user', content: [{ type: 'input_image', file_id: 'file_1' }] }],
+      [
+        {
+          role: 'user',
+          content: [
             {
-              role: 'user',
-              content: [
-                {
-                  type: 'input_image',
-                  image_url: 'https://example.test/a.png',
-                },
-              ],
+              type: 'input_image',
+              file_id: 'file_1',
+              image_url: 'https://example.test/a.png',
             },
           ],
-        }),
-      ),
-    ).toThrowError(/only input_text/);
+        },
+      ],
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_image',
+              image_url: 'data:image/png;base64,A',
+            },
+          ],
+        },
+      ],
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_image',
+              image_url: 'data:image/png;base64,SGVsbG8=',
+            },
+          ],
+        },
+      ],
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_image',
+              image_url: ' https://example.test/a.png',
+            },
+          ],
+        },
+      ],
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_image',
+              image_url: 'http://example.test/a.png',
+            },
+          ],
+        },
+      ],
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_image',
+              image_url: 'https://user:secret@example.test/a.png',
+            },
+          ],
+        },
+      ],
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_image',
+              image_url: 'data:image/svg+xml;base64,PHN2Zz4=',
+            },
+          ],
+        },
+      ],
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_image',
+              image_url: 'https://example.test/a.png',
+              detail: 'original',
+            },
+          ],
+        },
+      ],
+      [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'input_image',
+              image_url: 'https://example.test/a.png',
+            },
+          ],
+        },
+      ],
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_file', file_url: 'https://example.test/a.pdf' },
+          ],
+        },
+      ],
+    ];
+
+    for (const input of invalidInputs) {
+      expect(() =>
+        responsesToChatCompletion(
+          parseResponsesRequest({ model: 'coding', input }),
+        ),
+      ).toThrowError(GatewayHttpError);
+    }
   });
 
   it('normalizes assistant text, tool calls, public model, and usage', () => {

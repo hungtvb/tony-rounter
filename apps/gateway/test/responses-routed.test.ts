@@ -111,6 +111,29 @@ function toolHistoryRouterConfig(): GatewayRouterConfig {
   return { ...base, registry };
 }
 
+function visionRouterConfig(): GatewayRouterConfig {
+  const registry = parseRoutingConfig(
+    ROUTING_YAML.replace(
+      `  backup-model:
+    provider: backup
+    upstreamModel: backup-upstream
+    capabilities:
+      tools: true
+      parallelToolCalls: true
+      vision: false`,
+      `  backup-model:
+    provider: backup
+    upstreamModel: backup-upstream
+    capabilities:
+      tools: true
+      parallelToolCalls: true
+      vision: true`,
+    ),
+  );
+  const base = routerConfig();
+  return { ...base, registry };
+}
+
 class FakeProvider implements OpenAICompatibleProvider {
   readonly requests: ChatCompletionRequest[] = [];
 
@@ -387,6 +410,106 @@ describe('routed Responses text streaming', () => {
     expect(response.headers['x-tony-router-attempts']).toBe('1');
     expect(primary.requests).toHaveLength(0);
     expect(backup.requests).toHaveLength(1);
+  });
+
+  it('routes image input only to a vision-capable model', async () => {
+    const primary = new FakeProvider(async () =>
+      successfulStream('chatcmpl_primary_incompatible', 'must not run'),
+    );
+    const backup = new FakeProvider(async () =>
+      successfulStream('chatcmpl_backup_vision', 'a cat'),
+    );
+    const app = track(
+      buildGateway({
+        config: gatewayConfig(),
+        router: visionRouterConfig(),
+        routedProviders: { primary, backup },
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await routedResponse(app, {
+      model: 'tony-auto',
+      stream: true,
+      input: [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'Describe this.' },
+            {
+              type: 'input_image',
+              image_url: 'https://images.example.test/cat.png',
+              detail: 'high',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['x-tony-router-route']).toBe('backup-route');
+    expect(response.headers['x-tony-router-provider']).toBe('backup');
+    expect(response.headers['x-tony-router-attempts']).toBe('1');
+    expect(primary.requests).toHaveLength(0);
+    expect(backup.requests).toHaveLength(1);
+    expect(backup.requests[0]).toMatchObject({
+      model: 'backup-upstream',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Describe this.' },
+            {
+              type: 'image_url',
+              image_url: {
+                url: 'https://images.example.test/cat.png',
+                detail: 'high',
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('rejects image input before provider invocation when no route supports vision', async () => {
+    const primary = new FakeProvider(async () =>
+      successfulStream('chatcmpl_primary', 'must not run'),
+    );
+    const backup = new FakeProvider(async () =>
+      successfulStream('chatcmpl_backup', 'must not run'),
+    );
+    const app = track(
+      buildGateway({
+        config: gatewayConfig(),
+        router: routerConfig(),
+        routedProviders: { primary, backup },
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await routedResponse(app, {
+      model: 'tony-auto',
+      stream: true,
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_image',
+              image_url: 'https://images.example.test/cat.png',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: { code: 'no_compatible_route' },
+    });
+    expect(primary.requests).toHaveLength(0);
+    expect(backup.requests).toHaveLength(0);
   });
 
   it('routes streaming function tools and preserves public identity', async () => {
