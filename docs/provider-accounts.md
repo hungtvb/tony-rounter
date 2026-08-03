@@ -48,7 +48,7 @@ profiles:
       - route: work-route
 ```
 
-Both routes reuse one provider adapter and one model catalog entry. They differ only by account credential and account-specific runtime state.
+Both routes reuse one provider adapter and one model catalog entry. They differ only by account credential and account-specific runtime state. Route priority and route ID provide deterministic account selection before affinity or failure state is applied.
 
 ## Provider binding v2
 
