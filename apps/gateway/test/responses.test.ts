@@ -269,10 +269,7 @@ describe('POST /v1/responses', () => {
   it('returns an error event when a streaming upstream fails after output', async () => {
     const createChatCompletion = vi.fn().mockResolvedValue({
       stream: true,
-      body: Readable.from([
-        sse(streamChunk('partial')),
-        sse('{"broken":'),
-      ]),
+      body: Readable.from([sse(streamChunk('partial')), sse('{"broken":')]),
     });
     const app = track(
       buildGateway({
@@ -335,9 +332,7 @@ describe('POST /v1/responses', () => {
       stream: false,
       body: {
         id: 'chatcmpl_wrong_shape',
-        choices: [
-          { message: { role: 'assistant', content: 'not a stream' } },
-        ],
+        choices: [{ message: { role: 'assistant', content: 'not a stream' } }],
       },
     });
     const app = track(

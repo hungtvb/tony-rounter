@@ -41,9 +41,7 @@ function encodeDataEvents(
   encoder: ResponsesTextStreamEncoder,
   chunk: unknown,
 ): readonly string[] {
-  return decoder
-    .push(byteChunk(chunk))
-    .flatMap((data) => encoder.push(data));
+  return decoder.push(byteChunk(chunk)).flatMap((data) => encoder.push(data));
 }
 
 function finishEvents(

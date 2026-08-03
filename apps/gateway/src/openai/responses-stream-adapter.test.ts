@@ -30,7 +30,8 @@ async function text(stream: Readable): Promise<string> {
   let output = '';
   for await (const value of stream) {
     if (typeof value === 'string') output += value;
-    else if (value instanceof Uint8Array) output += Buffer.from(value).toString('utf8');
+    else if (value instanceof Uint8Array)
+      output += Buffer.from(value).toString('utf8');
     else throw new TypeError('Unexpected stream chunk');
   }
   return output;
