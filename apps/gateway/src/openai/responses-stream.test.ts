@@ -240,11 +240,11 @@ describe('ResponsesStreamEncoder', () => {
       output_index: 0,
       delta: '{"path":"a',
     });
-    expect(events[5]).toMatchObject({
+    expect(events[5]).toEqual({
+      type: 'response.function_call_arguments.done',
+      sequence_number: 5,
       item_id: 'fc_call_1_0',
       output_index: 0,
-      call_id: 'call_1',
-      name: 'write_file',
       arguments: '{"path":"a.txt","content":"ok"}',
     });
     expect(events[7]).toMatchObject({
