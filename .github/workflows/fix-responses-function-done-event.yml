@@ -1,0 +1,50 @@
+name: Fix Responses Function Done Event
+
+on:
+  push:
+    branches:
+      - feat/responses-function-call-streaming
+    paths:
+      - '.github/workflows/fix-responses-function-done-event.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/responses-function-call-streaming
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Apply protocol schema fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'H4sIAAAAAAACA52STW+bQBCG7/yKFT1gC1hCaoPjqlUuOeRQVWqPVYWWZbC3hYWwQ+PI8n8vy5dNmqi1uSw7887szKsnEWlKXHcrkLAFK0u12DKEJ/a8UBVfFCVIJhYVqLKQCpSrsAKWUwSFFBWJLy4xhExgT7x4HfAUKGVe/D4IfeJ7XrBcGq7rXjGHYdv2NbPc3RH3Zuk5vk/s/mxCCSheiRhm1teh8Ftbdy95kUBlOWQ2Jx8/kYNBuq+osawxalfbEM8Z4glkyDbEOpglw525MZnV547zD4arf2BfAscZ/AaJ6vvqx5xi8Zkh332Jf+rEwbDfkt0/1iwbBITgcwnNW8OyNK0lR1HIiLMsi1i1rXNdTJNCQjNGX6XgsQbJIZJ1HkO1IatxeoGQRyJpeqa8a+JHnuW8ubTbxVtlW9bVWGNGslxP+FQ1naNUZHBqNo43cYviHk3H5IXEJtdEil/m8dxC8rc34SsWJtdBfhnfA9qBH4YprCj143Xo395ei/blVHdAr24CZ01sfQQa58aeokLCM6YUeZ3oE8ktSDuh6LvWztn/4jTtcMZORwnV94fEmYqmBPXK7njQsRGcF2D1Sn3XPSeijrFeoS8v3jwDrReNkYnyOHf+7cmwQLPcyYc/GYU5sVIFAAA=' | base64 --decode | gzip --decompress > "$RUNNER_TEMP/fix.patch"
+          git apply --check "$RUNNER_TEMP/fix.patch"
+          git apply "$RUNNER_TEMP/fix.patch"
+          rm .github/workflows/fix-responses-function-done-event.yml
+      - name: Verify feature
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm verify
+      - name: Commit fix and remove automation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix(responses): match function argument done schema"
+          git push origin HEAD:feat/responses-function-call-streaming
