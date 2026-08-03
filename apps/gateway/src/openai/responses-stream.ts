@@ -193,9 +193,7 @@ export class ResponsesTextStreamEncoder {
     const finishReason = choice.finish_reason;
     if (finishReason !== undefined && finishReason !== null) {
       if (finishReason !== 'stop') {
-        return unsupported(
-          `Unsupported streaming finish reason: ${String(finishReason)}`,
-        );
+        return unsupported('Upstream emitted an unsupported finish reason');
       }
       if (this.#finishSeen) {
         return streamFailure('Upstream emitted multiple finish reasons');
