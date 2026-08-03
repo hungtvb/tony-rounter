@@ -7,19 +7,16 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout Phase 4 branch
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: feat/multi-provider-gateway
-          fetch-depth: 0
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -32,83 +29,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Update workspace lockfile
-        run: pnpm install --no-frozen-lockfile
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-      - name: Finish dashboard routed mode
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('apps/gateway/src/ui-assets/client-part-2.ts')
-          text = path.read_text()
-          old_label = '''  function providerLabel(runtime) {
-    const provider = runtime && runtime.provider;
-    if (!provider) return 'Not configured';
-    if (provider.mode === 'static-registry') return 'Static model registry';
-    if (provider.baseUrl) {
-      try { return new URL(provider.baseUrl).hostname; } catch (_) { return 'OpenAI-compatible'; }
-    }
-    return provider.mode === 'openai-compatible' ? 'OpenAI-compatible' : 'Not configured';
-  }'''
-          new_label = '''  function providerLabel(runtime) {
-    const provider = runtime && runtime.provider;
-    if (!provider) return 'Not configured';
-    if (provider.mode === 'routed') return (provider.providerCount || 0) + ' routed providers';
-    if (provider.mode === 'static-registry') return 'Static model registry';
-    if (provider.baseUrl) {
-      try { return new URL(provider.baseUrl).hostname; } catch (_) { return 'OpenAI-compatible'; }
-    }
-    return provider.mode === 'openai-compatible' ? 'OpenAI-compatible' : 'Not configured';
-  }'''
-          if text.count(old_label) != 1:
-              raise SystemExit('providerLabel anchor changed')
-          text = text.replace(old_label, new_label, 1)
-
-          old_metrics = "    elements.providerMetric.textContent = connected ? (configured ? '1 / 1' : '0 / 1') : 'Locked';"
-          new_metrics = "    const providerCount = provider && provider.providerCount ? provider.providerCount : (configured ? 1 : 0);\n    elements.providerMetric.textContent = connected ? providerCount + ' / ' + providerCount : 'Locked';"
-          if text.count(old_metrics) != 1:
-              raise SystemExit('provider metric anchor changed')
-          text = text.replace(old_metrics, new_metrics, 1)
-
-          old_url = "      ? (provider.baseUrl || (provider.mode === 'static-registry' ? 'Local static registry' : 'No upstream URL'))"
-          new_url = "      ? (provider.baseUrl || (provider.mode === 'routed' ? 'Managed by routing registry' : provider.mode === 'static-registry' ? 'Local static registry' : 'No upstream URL'))"
-          if text.count(old_url) != 1:
-              raise SystemExit('provider URL anchor changed')
-          text = text.replace(old_url, new_url, 1)
-
-          old_foot = "        : 'Configure an upstream or static registry';"
-          new_foot = "        : 'Configure a routed provider, upstream, or static registry';"
-          if text.count(old_foot) != 1:
-              raise SystemExit('provider footer anchor changed')
-          path.write_text(text.replace(old_foot, new_foot, 1))
-          PY
-
-      - name: Format and restore standard CI
-        run: |
-          pnpm exec prettier --write \
-            apps/gateway/package.json \
-            apps/gateway/src/app.ts \
-            apps/gateway/src/index.ts \
-            apps/gateway/src/server.ts \
-            apps/gateway/src/ui.ts \
-            apps/gateway/src/ui-assets/client-part-2.ts \
-            apps/gateway/src/routing/config.ts \
-            apps/gateway/src/routing/provider.ts \
-            apps/gateway/test/router-config.test.ts \
-            apps/gateway/test/routed-gateway.test.ts \
-            docs/multi-provider-gateway.md \
-            pnpm-lock.yaml
-          rm -f .github/phase4.payload.*
-          git checkout origin/main -- .github/workflows/ci.yml
-
-      - name: Verify repository
+      - name: Verify
         run: pnpm verify
-
-      - name: Commit verified Phase 4
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat(gateway): wire multi-provider routing runtime"
-          git push origin HEAD:feat/multi-provider-gateway
