@@ -1,0 +1,75 @@
+name: Apply Phase 7 Local Control Plane
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/chatgpt-phase7-apply.yml
+      - .phase7/**
+      - .phase7-placeholder
+
+permissions:
+  contents: write
+
+jobs:
+  apply-format-verify:
+    if: github.head_ref == 'feat/local-config-apply-health'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply exact product patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .phase7/patch.part-* | base64 --decode | gunzip > "$RUNNER_TEMP/phase7.patch"
+          echo '1f31b62c6cd2b6cce450b54eab973020d4d269caded3d414d2dcfcbe3b84614a  '"$RUNNER_TEMP/phase7.patch" | sha256sum --check --strict
+          git apply --check "$RUNNER_TEMP/phase7.patch"
+          git apply "$RUNNER_TEMP/phase7.patch"
+          rm -rf .phase7 .phase7-placeholder .github/workflows/chatgpt-phase7-apply.yml
+
+      - name: Format
+        run: pnpm format
+
+      - name: Run focused control-plane tests
+        run: >-
+          pnpm --filter @tony-router/gateway exec vitest run
+          test/control-config-store.test.ts
+          test/control-plane.test.ts
+          test/config.test.ts
+          test/ui.test.ts
+
+      - name: Run full verification
+        run: pnpm verify
+
+      - name: Commit product source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e .phase7
+          test ! -e .phase7-placeholder
+          test ! -e .github/workflows/chatgpt-phase7-apply.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat(control): add atomic config apply and account health'
+          git push origin HEAD:refs/heads/feat/local-config-apply-health
