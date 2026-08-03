@@ -111,6 +111,7 @@ describe('Responses API protocol translation', () => {
       { top_p: -0.1 },
       { top_p: 1.1 },
       { parallel_tool_calls: 'yes' },
+      { stream: 'yes' },
     ];
 
     for (const fields of invalidRequests) {
@@ -144,18 +145,49 @@ describe('Responses API protocol translation', () => {
     ).toThrowError(/strict must be a boolean/);
   });
 
-  it('rejects streaming until the Responses SSE contract is implemented', () => {
-    expect(() =>
-      parseResponsesRequest({ model: 'coding', input: 'hello', stream: true }),
-    ).toThrowError(GatewayHttpError);
+  it('translates text streaming requests with usage reporting enabled', () => {
+    expect(
+      responsesToChatCompletion(
+        parseResponsesRequest({
+          model: 'coding',
+          input: 'hello',
+          stream: true,
+          max_output_tokens: 100,
+        }),
+      ),
+    ).toEqual({
+      model: 'coding',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+      stream_options: { include_usage: true },
+      max_completion_tokens: 100,
+    });
+  });
 
-    try {
-      parseResponsesRequest({ model: 'coding', input: 'hello', stream: true });
-    } catch (error) {
-      expect(error).toMatchObject({
-        statusCode: 400,
-        code: 'unsupported_responses_feature',
-      });
+  it('rejects streaming function tools and required or named tool choices', () => {
+    const requests = [
+      {
+        tools: [
+          {
+            type: 'function',
+            name: 'write_file',
+            parameters: { type: 'object', properties: {} },
+          },
+        ],
+      },
+      { tool_choice: 'required' },
+      { tool_choice: { type: 'function', name: 'write_file' } },
+    ];
+
+    for (const fields of requests) {
+      expect(() =>
+        parseResponsesRequest({
+          model: 'coding',
+          input: 'hello',
+          stream: true,
+          ...fields,
+        }),
+      ).toThrowError(/streaming/);
     }
   });
 
