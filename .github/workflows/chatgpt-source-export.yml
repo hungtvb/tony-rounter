@@ -1,0 +1,57 @@
+name: ChatGPT Source Export
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/chatgpt-source-export.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact PR base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify and sanitize repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.base.sha }}"
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --local --unset-all credential.helper || true
+          if git config --local --get-regexp 'http\..*\.extraheader|authorization|credential' ; then
+            echo 'Sensitive Git configuration remains' >&2
+            exit 1
+          fi
+          git status --short
+          git fsck --full
+
+      - name: Package repository with Git history
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/tony-rounter-main-with-git.tar.gz"
+          checksum="$RUNNER_TEMP/tony-rounter-main-with-git.tar.gz.sha256"
+          tar -C "$GITHUB_WORKSPACE" -czf "$archive" .
+          sha256sum "$archive" > "$checksum"
+          mkdir -p "$RUNNER_TEMP/source-export"
+          cp "$archive" "$checksum" "$RUNNER_TEMP/source-export/"
+          echo "directory=$RUNNER_TEMP/source-export" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tony-rounter-main-with-git
+          path: ${{ steps.package.outputs.directory }}
+          if-no-files-found: error
+          retention-days: 1
