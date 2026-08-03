@@ -165,7 +165,6 @@ describe('POST /v1/responses', () => {
       ],
       stream: false,
       max_completion_tokens: 20,
-      tool_choice: 'none',
     });
     expect(response.json()).toMatchObject({
       id: 'chatcmpl_gateway',
@@ -259,6 +258,7 @@ describe('POST /v1/responses', () => {
       stream: true,
       stream_options: { include_usage: true },
       max_completion_tokens: 20,
+      tool_choice: 'none',
     });
     expect(response.body).toContain('event: response.created');
     expect(response.body).toContain('event: response.output_text.delta');
