@@ -165,7 +165,7 @@ describe('ResponsesTextStreamEncoder', () => {
     const unsupported = new ResponsesTextStreamEncoder({ model: 'coding' });
     expect(() =>
       unsupported.push(chatChunk({ content: 'x' }, 'length')),
-    ).toThrowError(/Unsupported streaming finish reason/);
+    ).toThrowError(/unsupported finish reason/);
 
     const duplicate = new ResponsesTextStreamEncoder({ model: 'coding' });
     duplicate.push(chatChunk({ content: 'x' }, 'stop'));
