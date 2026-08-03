@@ -49,6 +49,28 @@ function provider(
   };
 }
 
+function sse(data: unknown): string {
+  const payload = typeof data === 'string' ? data : JSON.stringify(data);
+  return `data: ${payload}\n\n`;
+}
+
+function streamChunk(
+  content: string | null,
+  finishReason: string | null = null,
+): Readonly<Record<string, unknown>> {
+  return {
+    id: 'chatcmpl_gateway_stream',
+    created: 123,
+    choices: [
+      {
+        index: 0,
+        delta: content === null ? {} : { content },
+        finish_reason: finishReason,
+      },
+    ],
+  };
+}
+
 afterEach(async () => {
   await Promise.allSettled(apps.splice(0).map((app) => app.close()));
 });
@@ -190,8 +212,68 @@ describe('POST /v1/responses', () => {
     expect(createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('rejects unsupported streaming before calling the provider', async () => {
-    const createChatCompletion = vi.fn();
+  it('streams text Responses events without exposing the Chat Completions sentinel', async () => {
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: true,
+      body: Readable.from([
+        sse(streamChunk('Hel')),
+        sse(streamChunk('lo')),
+        sse({
+          ...streamChunk(null, 'stop'),
+          usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 },
+        }),
+        sse('[DONE]'),
+      ]),
+    });
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        instructions: 'Be concise.',
+        input: 'Say hello.',
+        max_output_tokens: 20,
+        tool_choice: 'none',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(createChatCompletion.mock.calls[0]?.[0]).toEqual({
+      model: 'coding',
+      messages: [
+        { role: 'developer', content: 'Be concise.' },
+        { role: 'user', content: 'Say hello.' },
+      ],
+      stream: true,
+      stream_options: { include_usage: true },
+      max_completion_tokens: 20,
+      tool_choice: 'none',
+    });
+    expect(response.body).toContain('event: response.created');
+    expect(response.body).toContain('event: response.output_text.delta');
+    expect(response.body).toContain('event: response.completed');
+    expect(response.body).toContain('"text":"Hello"');
+    expect(response.body).toContain('"tool_choice":"none"');
+    expect(response.body).not.toContain('[DONE]');
+    expect(response.body).not.toContain('event: error');
+  });
+
+  it('returns an error event when a streaming upstream fails after output', async () => {
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: true,
+      body: Readable.from([sse(streamChunk('partial')), sse('{"broken":')]),
+    });
     const app = track(
       buildGateway({
         config: config(),
@@ -207,6 +289,40 @@ describe('POST /v1/responses', () => {
       payload: { model: 'coding', input: 'hello', stream: true },
     });
 
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('event: response.output_text.delta');
+    expect(response.body).toContain('event: error');
+    expect(response.body).not.toContain('event: response.completed');
+  });
+
+  it('rejects streaming function tools before calling the provider', async () => {
+    const createChatCompletion = vi.fn();
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        input: 'hello',
+        stream: true,
+        tools: [
+          {
+            type: 'function',
+            name: 'write_file',
+            parameters: { type: 'object', properties: {} },
+          },
+        ],
+      },
+    });
+
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
       error: { code: 'unsupported_responses_feature' },
@@ -214,7 +330,36 @@ describe('POST /v1/responses', () => {
     expect(createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('destroys an unexpected upstream stream and returns a protocol error', async () => {
+  it('returns a protocol error when a streaming request receives JSON', async () => {
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: false,
+      body: {
+        id: 'chatcmpl_wrong_shape',
+        choices: [{ message: { role: 'assistant', content: 'not a stream' } }],
+      },
+    });
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: { model: 'coding', input: 'hello', stream: true },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      error: { code: 'upstream_protocol_mismatch' },
+    });
+  });
+
+  it('destroys an unexpected upstream stream for a non-streaming request', async () => {
     const body = Readable.from(['data: unexpected']);
     const destroy = vi.spyOn(body, 'destroy');
     const createChatCompletion = vi.fn().mockResolvedValue({

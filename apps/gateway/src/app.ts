@@ -18,6 +18,7 @@ import {
   type OpenAICompatibleProvider,
 } from './openai/client.js';
 import { parseChatCompletionRequest } from './openai/protocol.js';
+import { prepareResponsesTextStream } from './openai/responses-stream-adapter.js';
 import {
   chatCompletionToResponse,
   parseResponsesRequest,
@@ -321,6 +322,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
     const responsesRequest = parseResponsesRequest(request.body);
     const chatRequest = responsesToChatCompletion(responsesRequest);
     const abortContext = createRequestAbortContext(request, reply);
+    let streaming = false;
 
     try {
       const sessionId = singleHeader(request, 'x-tony-router-session');
@@ -346,6 +348,51 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
         reply.header('x-tony-router-attempts', routedResult.attempts);
       }
 
+      if (responsesRequest.stream === true) {
+        if (!result.stream) {
+          throw new GatewayHttpError(
+            502,
+            'upstream_protocol_mismatch',
+            'Upstream unexpectedly returned JSON for a streaming response',
+          );
+        }
+
+        const body = await prepareResponsesTextStream(result.body, {
+          model: responsesRequest.model,
+          ...(responsesRequest.instructions !== undefined
+            ? { instructions: responsesRequest.instructions }
+            : {}),
+          ...(responsesRequest.max_output_tokens !== undefined
+            ? { maxOutputTokens: responsesRequest.max_output_tokens }
+            : {}),
+          ...(responsesRequest.parallel_tool_calls !== undefined
+            ? { parallelToolCalls: responsesRequest.parallel_tool_calls }
+            : {}),
+          ...(responsesRequest.temperature !== undefined
+            ? { temperature: responsesRequest.temperature }
+            : {}),
+          ...(responsesRequest.top_p !== undefined
+            ? { topP: responsesRequest.top_p }
+            : {}),
+          ...(responsesRequest.tool_choice === 'none' ||
+          responsesRequest.tool_choice === 'auto'
+            ? { toolChoice: responsesRequest.tool_choice }
+            : {}),
+        });
+        const cleanup = (): void => abortContext.cleanup();
+        body.once('end', cleanup);
+        body.once('close', cleanup);
+        body.once('error', cleanup);
+
+        reply.header('content-type', 'text/event-stream; charset=utf-8');
+        reply.header('cache-control', 'no-cache, no-transform');
+        reply.header('connection', 'keep-alive');
+        reply.header('x-accel-buffering', 'no');
+        const sent = reply.send(body);
+        streaming = true;
+        return sent;
+      }
+
       if (result.stream) {
         result.body.destroy();
         throw new GatewayHttpError(
@@ -357,7 +404,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
 
       return chatCompletionToResponse(result.body, responsesRequest.model);
     } finally {
-      abortContext.cleanup();
+      if (!streaming) abortContext.cleanup();
     }
   });
 
