@@ -50,6 +50,9 @@ jobs:
       - name: Format
         run: pnpm format
 
+      - name: Build routing core for focused tests
+        run: pnpm --filter @tony-router/core build
+
       - name: Run focused control-plane tests
         run: >-
           pnpm --filter @tony-router/gateway exec vitest run
