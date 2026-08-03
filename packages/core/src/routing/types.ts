@@ -4,10 +4,16 @@ import type {
 } from '../capabilities.js';
 
 export type ProviderKind = 'openai-compatible';
+export type RoutingConfigVersion = 1 | 2;
 
 export interface RoutingProvider {
   readonly id: string;
   readonly kind: ProviderKind;
+}
+
+export interface RoutingAccount {
+  readonly id: string;
+  readonly providerId: string;
 }
 
 export interface RoutingModel {
@@ -20,6 +26,7 @@ export interface RoutingModel {
 export interface RoutingRoute {
   readonly id: string;
   readonly modelId: string;
+  readonly accountId: string;
   readonly enabled: boolean;
   readonly priority: number;
 }
@@ -35,9 +42,10 @@ export interface RoutingProfile {
 }
 
 export interface RoutingConfig {
-  readonly version: 1;
+  readonly version: RoutingConfigVersion;
   readonly defaultProfileId: string;
   readonly providers: Readonly<Record<string, RoutingProvider>>;
+  readonly accounts: Readonly<Record<string, RoutingAccount>>;
   readonly models: Readonly<Record<string, RoutingModel>>;
   readonly routes: Readonly<Record<string, RoutingRoute>>;
   readonly profiles: Readonly<Record<string, RoutingProfile>>;
@@ -74,6 +82,7 @@ export interface RouteCandidateTrace {
   readonly routeId: string;
   readonly modelId: string;
   readonly providerId: string;
+  readonly accountId: string;
   readonly accepted: boolean;
   readonly rejections: readonly RouteRejection[];
   readonly score?: RouteScore;
@@ -83,6 +92,7 @@ export interface SelectedRoute {
   readonly routeId: string;
   readonly modelId: string;
   readonly providerId: string;
+  readonly accountId: string;
   readonly upstreamModel: string;
   readonly score: RouteScore;
   readonly affinityRetained: boolean;
