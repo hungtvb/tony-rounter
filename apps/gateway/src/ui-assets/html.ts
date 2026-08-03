@@ -19,6 +19,7 @@ export const UI_HTML = String.raw`<!doctype html>
 
       <nav class="nav" aria-label="Primary navigation">
         <button class="nav-item is-active" data-view-target="dashboard" type="button"><span class="nav-icon">⌂</span><span>Dashboard</span></button>
+        <button class="nav-item" data-view-target="providers" type="button"><span class="nav-icon">▦</span><span>Providers</span></button>
         <button class="nav-item" data-view-target="models" type="button"><span class="nav-icon">◇</span><span>Models</span></button>
         <button class="nav-item" data-view-target="playground" type="button"><span class="nav-icon">▢</span><span>Chat Playground</span></button>
         <button class="nav-item" data-view-target="traces" type="button"><span class="nav-icon">↗</span><span>Request Traces</span></button>
@@ -83,7 +84,7 @@ export const UI_HTML = String.raw`<!doctype html>
 
           <div class="dashboard-grid">
             <article class="panel provider-panel">
-              <div class="panel-head"><div><span class="eyebrow">PROVIDER</span><h3>Runtime connection</h3></div><button class="text-button" data-view-target="connection" type="button">Manage</button></div>
+              <div class="panel-head"><div><span class="eyebrow">PROVIDER</span><h3>Runtime connection</h3></div><button class="text-button" data-view-target="providers" type="button">Manage</button></div>
               <div class="provider-body">
                 <span class="provider-logo" id="providerLogo">AI</span>
                 <div class="provider-copy"><strong id="providerName">Not connected</strong><small id="providerBaseUrl">Protected runtime data is locked</small></div>
@@ -112,6 +113,63 @@ export const UI_HTML = String.raw`<!doctype html>
                 <p>Use the OpenAI-compatible Chat Completions endpoint and inspect output directly in this tab.</p>
               </div>
               <button class="button button-primary button-full" data-view-target="playground" type="button">Open Chat Playground</button>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="providers" aria-labelledby="providersHeading">
+          <div class="view-heading provider-view-heading">
+            <div><span class="eyebrow">CONNECTIONS</span><h2 id="providersHeading">Providers &amp; Accounts</h2><p>Inspect the active routing inventory and generate safe starter configuration without entering provider secrets in the browser.</p></div>
+            <div class="provider-heading-actions"><span class="health-badge is-muted" id="providerModeBadge">Locked</span><span class="count-badge" id="providerCountLabel">0 providers</span></div>
+          </div>
+
+          <div class="provider-summary-grid" aria-label="Routing summary">
+            <article class="provider-summary-card"><span>Providers</span><strong id="providerPageProviderCount">0</strong><small>Adapter definitions</small></article>
+            <article class="provider-summary-card"><span>Accounts</span><strong id="providerPageAccountCount">0</strong><small>Independent credentials</small></article>
+            <article class="provider-summary-card"><span>Profiles</span><strong id="providerPageProfileCount">0</strong><small>Public model IDs</small></article>
+            <article class="provider-summary-card"><span>Credentials</span><strong id="providerPageCredentialCount">0</strong><small>Loaded from environment</small></article>
+          </div>
+
+          <div class="providers-layout">
+            <article class="panel provider-catalog-panel">
+              <div class="panel-head"><div><span class="eyebrow">ACTIVE CONFIG</span><h3>Provider inventory</h3></div><span class="health-badge is-muted" id="providerInventoryStatus">Locked</span></div>
+              <div class="provider-inventory-list" id="providerInventory">
+                <div class="empty-state"><strong>Connect to inspect providers</strong><small>Protected routing metadata appears after local bearer authentication.</small></div>
+              </div>
+              <div class="profile-coverage-block">
+                <div class="profile-coverage-heading"><span>Public profiles</span><small>Route and account coverage</small></div>
+                <div class="profile-coverage-list" id="profileInventory"><span class="profile-chip is-muted">Locked</span></div>
+              </div>
+            </article>
+
+            <article class="panel setup-panel">
+              <div class="panel-head"><div><span class="eyebrow">ADD ACCOUNT</span><h3>Environment-only setup</h3></div><span class="health-badge">No secrets stored</span></div>
+              <div class="setup-body">
+                <p class="setup-intro">Generate complete version 2 starter files. Tony Router stores only the environment-variable name in provider bindings; export the real key in your shell before restart.</p>
+                <div class="setup-field-grid">
+                  <label for="setupProviderId"><span>Provider ID</span><input id="setupProviderId" value="openai" autocomplete="off" spellcheck="false"></label>
+                  <label for="setupAccountId"><span>Account ID</span><input id="setupAccountId" value="personal" autocomplete="off" spellcheck="false"></label>
+                  <label class="setup-field-wide" for="setupBaseUrl"><span>OpenAI-compatible base URL</span><input id="setupBaseUrl" type="url" value="https://api.openai.com/v1" autocomplete="url" spellcheck="false"></label>
+                  <label for="setupApiKeyEnv"><span>API key environment variable</span><input id="setupApiKeyEnv" value="OPENAI_PERSONAL_KEY" autocomplete="off" spellcheck="false"></label>
+                  <label for="setupTimeoutMs"><span>Timeout (milliseconds)</span><input id="setupTimeoutMs" type="number" min="10" max="600000" step="1000" value="60000"></label>
+                  <label for="setupUpstreamModel"><span>Upstream model</span><input id="setupUpstreamModel" value="gpt-5" autocomplete="off" spellcheck="false"></label>
+                  <label for="setupProfileId"><span>Public profile / model ID</span><input id="setupProfileId" value="tony-auto" autocomplete="off" spellcheck="false"></label>
+                </div>
+                <button class="button button-primary button-full setup-generate-button" id="generateSetupButton" type="button">Generate starter files</button>
+                <p class="setup-validation" id="setupValidation" role="status" aria-live="polite">Ready to generate configuration.</p>
+
+                <div class="config-output-stack">
+                  <section class="config-output-card" aria-labelledby="routingOutputHeading">
+                    <div><strong id="routingOutputHeading">router.yaml</strong><button class="text-button" id="copyRoutingConfigButton" type="button">Copy</button></div>
+                    <pre id="routingConfigOutput" tabindex="0">Generate a starter configuration.</pre>
+                  </section>
+                  <section class="config-output-card" aria-labelledby="bindingOutputHeading">
+                    <div><strong id="bindingOutputHeading">providers.json</strong><button class="text-button" id="copyProviderBindingButton" type="button">Copy</button></div>
+                    <pre id="providerBindingOutput" tabindex="0">Generate a starter configuration.</pre>
+                  </section>
+                </div>
+                <div class="setup-next-step"><span class="tiny-dot"></span><p>Save both files, export the named API key variable, set the two <code>TONY_ROUTER_*_CONFIG_FILE</code> paths, then restart the gateway.</p></div>
+              </div>
             </article>
           </div>
         </section>

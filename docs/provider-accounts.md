@@ -77,6 +77,14 @@ Both routes reuse one provider adapter and one model catalog entry. They differ 
 
 An account may override `baseUrl` and `timeoutMs`. API keys remain environment-variable references only. Raw secrets are rejected by the strict binding parser and never appear in dashboard payloads.
 
+## Local Providers control plane
+
+Open `http://127.0.0.1:8787/ui#providers` and authenticate the browser tab with the generated local bearer token. The Providers view shows a read-only, secret-safe inventory of the loaded provider adapters, accounts, profiles, endpoints, timeouts, route/model counts, and whether each account credential was loaded.
+
+The setup assistant follows a provider-first onboarding flow and generates a complete routing v2 YAML file plus provider binding v2 JSON. It asks only for the environment-variable name, never the API key value. Save the generated files, export the named variable in the gateway process environment, set `TONY_ROUTER_ROUTING_CONFIG_FILE` and `TONY_ROUTER_PROVIDER_CONFIG_FILE`, then restart the gateway.
+
+The current control plane intentionally does not mutate live configuration, persist provider secrets, or hot-reload the gateway.
+
 ## Compatibility
 
 Routing and binding version 1 remain accepted. Tony Router normalizes every v1 provider into one implicit account with the same ID, so existing Phase 4 deployments continue to work unchanged.
