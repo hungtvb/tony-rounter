@@ -12,7 +12,8 @@ Implemented and verified:
 - generated local bearer token and redacted JSON logs
 - authenticated `GET /v1/models`
 - authenticated `POST /v1/chat/completions`
-- non-streaming and validated SSE streaming proxy
+- authenticated non-streaming `POST /v1/responses` compatibility for text input and function tools
+- non-streaming and validated SSE streaming proxy for Chat Completions
 - upstream timeout, disconnect propagation, redirect rejection, and normalized errors
 - versioned YAML routing registry
 - hard capability extraction for tools, parallel tool calls, vision, structured output, and context size
@@ -24,6 +25,8 @@ Implemented and verified:
 - environment-only provider setup assistant that generates starter files without collecting raw API keys
 - optional loopback-only managed config generations with atomic apply, hash-verified rollback, and restart-required state
 - bounded per-account health probes that return status categories and latency without raw provider responses
+
+The initial Responses API slice translates supported requests through the same routed Chat Completions runtime, preserving public model IDs, tool calls, usage, and route/provider/account headers. Responses streaming, image input, hosted tools, background execution, stored responses, and response chaining are rejected explicitly until their contracts are implemented.
 
 The routing engine lives in `@tony-router/core`; the Fastify gateway wires profiles to provider accounts and keeps public model IDs stable across JSON and SSE responses.
 
@@ -62,6 +65,16 @@ curl http://127.0.0.1:8787/v1/chat/completions \
     "model": "gpt-4.1-mini",
     "messages": [{"role": "user", "content": "Hello"}],
     "stream": true
+  }'
+
+curl http://127.0.0.1:8787/v1/responses \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4.1-mini",
+    "instructions": "Be concise.",
+    "input": "Hello",
+    "stream": false
   }'
 ```
 
@@ -115,7 +128,8 @@ Client / Coding Agent
         v
 Protocol Gateway
   - OpenAI Chat Completions
-  - Responses / Anthropic Messages (planned)
+  - OpenAI Responses (initial non-streaming compatibility)
+  - Anthropic Messages (planned)
         |
         v
 Routing Engine

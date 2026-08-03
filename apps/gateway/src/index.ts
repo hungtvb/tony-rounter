@@ -38,6 +38,12 @@ export type {
   ChatCompletionRequest,
 } from './openai/protocol.js';
 export {
+  chatCompletionToResponse,
+  parseResponsesRequest,
+  responsesToChatCompletion,
+} from './openai/responses.js';
+export type { ResponsesRequest } from './openai/responses.js';
+export {
   GatewayRouterConfigError,
   loadGatewayRouterConfig,
   parseGatewayRouterSources,
