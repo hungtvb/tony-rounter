@@ -3,6 +3,7 @@ export interface RequiredCapabilities {
   readonly parallelToolCalls: boolean;
   readonly vision: boolean;
   readonly structuredOutput: boolean;
+  readonly reasoning?: boolean;
   readonly minimumContextTokens?: number;
 }
 
@@ -11,6 +12,7 @@ export interface CapabilityInput {
   readonly allowsParallelToolCalls?: boolean;
   readonly hasImageInput?: boolean;
   readonly hasStructuredOutput?: boolean;
+  readonly hasReasoning?: boolean;
   readonly estimatedInputTokens?: number;
   readonly reservedOutputTokens?: number;
 }
@@ -20,6 +22,7 @@ export interface ModelCapabilities {
   readonly parallelToolCalls: boolean;
   readonly vision: boolean;
   readonly structuredOutput: boolean;
+  readonly reasoning?: boolean;
   readonly contextTokens: number;
 }
 
@@ -55,6 +58,7 @@ export function deriveRequiredCapabilities(
       (input.hasTools ?? false) && (input.allowsParallelToolCalls ?? false),
     vision: input.hasImageInput ?? false,
     structuredOutput: input.hasStructuredOutput ?? false,
+    ...(input.hasReasoning === true ? { reasoning: true } : {}),
     ...(minimumContextTokens > 0 ? { minimumContextTokens } : {}),
   });
 }
@@ -67,6 +71,7 @@ export function supportsCapabilities(
   if (required.parallelToolCalls && !model.parallelToolCalls) return false;
   if (required.vision && !model.vision) return false;
   if (required.structuredOutput && !model.structuredOutput) return false;
+  if (required.reasoning && !model.reasoning) return false;
 
   return (
     required.minimumContextTokens === undefined ||

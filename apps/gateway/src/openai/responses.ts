@@ -37,6 +37,18 @@ export interface ResponsesTextConfig extends Readonly<Record<string, unknown>> {
   readonly format?: ResponsesTextFormat;
 }
 
+export type ResponsesReasoningEffort =
+  'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+export type ResponsesReasoningSummary = 'auto' | 'concise' | 'detailed';
+
+export interface ResponsesReasoningConfig extends Readonly<
+  Record<string, unknown>
+> {
+  readonly effort?: ResponsesReasoningEffort;
+  readonly summary?: ResponsesReasoningSummary;
+}
+
 export interface ResponsesRequest extends Readonly<Record<string, unknown>> {
   readonly model: string;
   readonly input: string | readonly unknown[];
@@ -49,6 +61,7 @@ export interface ResponsesRequest extends Readonly<Record<string, unknown>> {
   readonly tools?: readonly ResponsesFunctionTool[];
   readonly tool_choice?: ResponsesToolChoice;
   readonly text?: ResponsesTextConfig;
+  readonly reasoning?: ResponsesReasoningConfig;
   readonly store?: false;
   readonly background?: false;
 }
@@ -632,6 +645,61 @@ function textConfig(value: unknown): ResponsesTextConfig {
   return { format: textFormat(value.format) };
 }
 
+const REASONING_CONFIG_KEYS = new Set(['effort', 'summary']);
+const REASONING_EFFORTS = new Set<ResponsesReasoningEffort>([
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+]);
+const REASONING_SUMMARIES = new Set<ResponsesReasoningSummary>([
+  'auto',
+  'concise',
+  'detailed',
+]);
+
+function reasoningConfig(value: unknown): ResponsesReasoningConfig {
+  if (!isRecord(value)) return invalid('reasoning must be a JSON object');
+  unsupportedKeys(value, REASONING_CONFIG_KEYS, 'reasoning');
+
+  if (
+    value.effort !== undefined &&
+    (typeof value.effort !== 'string' ||
+      !REASONING_EFFORTS.has(value.effort as ResponsesReasoningEffort))
+  ) {
+    return invalid(
+      'reasoning effort must be none, minimal, low, medium, high, or xhigh',
+    );
+  }
+  if (
+    value.summary !== undefined &&
+    (typeof value.summary !== 'string' ||
+      !REASONING_SUMMARIES.has(value.summary as ResponsesReasoningSummary))
+  ) {
+    return invalid('reasoning summary must be auto, concise, or detailed');
+  }
+
+  return {
+    ...(value.effort !== undefined
+      ? { effort: value.effort as ResponsesReasoningEffort }
+      : {}),
+    ...(value.summary !== undefined
+      ? { summary: value.summary as ResponsesReasoningSummary }
+      : {}),
+  };
+}
+
+function responseReasoning(
+  value: ResponsesReasoningConfig | undefined,
+): JsonRecord {
+  return {
+    effort: value?.effort ?? null,
+    summary: value?.summary ?? null,
+  };
+}
+
 function chatResponseFormat(
   value: ResponsesTextConfig | undefined,
 ): JsonRecord | undefined {
@@ -695,10 +763,17 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
   validateToolChoiceAgainstTools(value);
   const normalizedText =
     value.text === undefined ? undefined : textConfig(value.text);
+  const normalizedReasoning =
+    value.reasoning === undefined
+      ? undefined
+      : reasoningConfig(value.reasoning);
 
   return {
     ...value,
     ...(normalizedText !== undefined ? { text: normalizedText } : {}),
+    ...(normalizedReasoning !== undefined
+      ? { reasoning: normalizedReasoning }
+      : {}),
   } as ResponsesRequest;
 }
 
@@ -738,6 +813,12 @@ export function responsesToChatCompletion(
   if (responseFormat !== undefined) {
     translated.response_format = responseFormat;
   }
+  if (request.reasoning?.effort !== undefined) {
+    translated.reasoning_effort = request.reasoning.effort;
+  }
+  if (request.reasoning?.summary !== undefined) {
+    translated.reasoning_summary = request.reasoning.summary;
+  }
 
   return translated as ChatCompletionRequest;
 }
@@ -769,11 +850,19 @@ function usage(value: unknown): JsonRecord | undefined {
     return undefined;
   }
 
+  const completionDetails = isRecord(value.completion_tokens_details)
+    ? value.completion_tokens_details
+    : undefined;
+  const reasoningTokens = nonNegativeInteger(
+    completionDetails?.reasoning_tokens,
+    'completion_tokens_details.reasoning_tokens',
+  );
   const normalizedInputTokens = inputTokens ?? 0;
   const normalizedOutputTokens = outputTokens ?? 0;
   return {
     input_tokens: normalizedInputTokens,
     output_tokens: normalizedOutputTokens,
+    output_tokens_details: { reasoning_tokens: reasoningTokens ?? 0 },
     total_tokens: totalTokens ?? normalizedInputTokens + normalizedOutputTokens,
   };
 }
@@ -782,6 +871,7 @@ export function chatCompletionToResponse(
   value: Readonly<Record<string, unknown>>,
   requestedModel: string,
   requestedTextFormat: ResponsesTextFormat = { type: 'text' },
+  requestedReasoning?: ResponsesReasoningConfig,
 ): Readonly<Record<string, unknown>> {
   if (typeof value.id !== 'string' || value.id.length === 0) {
     return upstreamInvalid('Upstream returned an invalid response ID');
@@ -799,22 +889,71 @@ export function chatCompletionToResponse(
 
   const message = rawMessage;
   const output: JsonRecord[] = [];
-  if (typeof message.content === 'string') {
+  const idBase =
+    value.id.replace(/[^A-Za-z0-9_-]/g, '').slice(-48) || 'response';
+
+  if (
+    message.reasoning_summary !== undefined &&
+    message.reasoning_summary !== null
+  ) {
+    if (
+      typeof message.reasoning_summary !== 'string' ||
+      message.reasoning_summary.length === 0
+    ) {
+      return upstreamInvalid(
+        'Upstream reasoning_summary must be a non-empty string or null',
+      );
+    }
     output.push({
-      id: `msg_${
-        value.id.replace(/[^A-Za-z0-9_-]/g, '').slice(-48) || 'response'
-      }`,
+      id: `rs_${idBase}`,
+      type: 'reasoning',
+      status: 'completed',
+      summary: [{ type: 'summary_text', text: message.reasoning_summary }],
+    });
+  }
+
+  const hasText = typeof message.content === 'string';
+  const hasRefusal = typeof message.refusal === 'string';
+  if (hasText && hasRefusal) {
+    return upstreamInvalid(
+      'Upstream returned assistant text and refusal together',
+    );
+  }
+  if (
+    message.refusal !== undefined &&
+    message.refusal !== null &&
+    typeof message.refusal !== 'string'
+  ) {
+    return upstreamInvalid(
+      'Upstream assistant refusal must be a string or null',
+    );
+  }
+  if (hasText || hasRefusal) {
+    output.push({
+      id: `msg_${idBase}`,
       type: 'message',
       status: 'completed',
       role: 'assistant',
-      content: [
-        { type: 'output_text', text: message.content, annotations: [] },
-      ],
+      content: hasRefusal
+        ? [{ type: 'refusal', refusal: message.refusal }]
+        : [{ type: 'output_text', text: message.content, annotations: [] }],
     });
-  } else if (message.content !== undefined && message.content !== null) {
+  } else if (
+    message.content !== undefined &&
+    message.content !== null &&
+    typeof message.content !== 'string'
+  ) {
     return upstreamInvalid(
       'Upstream assistant content must be a string or null',
     );
+  }
+
+  if (
+    hasRefusal &&
+    message.tool_calls !== undefined &&
+    message.tool_calls !== null
+  ) {
+    return upstreamInvalid('Upstream returned refusal and tool calls together');
   }
 
   if (message.tool_calls !== undefined && message.tool_calls !== null) {
@@ -874,6 +1013,7 @@ export function chatCompletionToResponse(
     model: requestedModel,
     output,
     parallel_tool_calls: true,
+    reasoning: responseReasoning(requestedReasoning),
     text: { format: requestedTextFormat },
     ...(normalizedUsage ? { usage: normalizedUsage } : {}),
   };

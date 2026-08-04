@@ -383,6 +383,9 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
           ...(responsesRequest.text?.format !== undefined
             ? { textFormat: responsesRequest.text.format }
             : {}),
+          ...(responsesRequest.reasoning !== undefined
+            ? { reasoning: responsesRequest.reasoning }
+            : {}),
         });
         const cleanup = (): void => abortContext.cleanup();
         body.once('end', cleanup);
@@ -411,6 +414,7 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
         result.body,
         responsesRequest.model,
         responsesRequest.text?.format,
+        responsesRequest.reasoning,
       );
     } finally {
       if (!streaming) abortContext.cleanup();

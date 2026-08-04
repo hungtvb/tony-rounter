@@ -17,6 +17,7 @@ models:
       parallelToolCalls: true
       vision: true
       structuredOutput: true
+      reasoning: true
       contextTokens: 128000
 routes:
   primary-route:
@@ -48,6 +49,7 @@ describe('parseRoutingConfig', () => {
           id: 'capable',
           providerId: 'primary',
           upstreamModel: 'capable-model',
+          capabilities: { reasoning: true },
         },
       },
       routes: {

@@ -19,6 +19,8 @@ describe('deriveChatRequestCapabilities', () => {
             },
           ],
           response_format: { type: 'json_schema' },
+          reasoning_effort: 'high',
+          reasoning_summary: 'concise',
         },
         { estimatedInputTokens: 4_000, reservedOutputTokens: 2_000 },
       ),
@@ -27,6 +29,7 @@ describe('deriveChatRequestCapabilities', () => {
       parallelToolCalls: true,
       vision: true,
       structuredOutput: true,
+      reasoning: true,
       minimumContextTokens: 6_000,
     });
   });
@@ -113,6 +116,12 @@ describe('deriveChatRequestCapabilities', () => {
       vision: true,
       structuredOutput: true,
     });
+  });
+
+  it('does not require reasoning for effort none without a summary', () => {
+    expect(
+      deriveChatRequestCapabilities({ reasoning_effort: 'none' }),
+    ).not.toHaveProperty('reasoning');
   });
 
   it('treats malformed or unknown request shapes as having no hard features', () => {

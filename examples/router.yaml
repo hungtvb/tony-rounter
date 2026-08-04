@@ -20,6 +20,7 @@ models:
       parallelToolCalls: true
       vision: false
       structuredOutput: true
+      reasoning: true
       contextTokens: 128000
 
   vision:
@@ -30,6 +31,7 @@ models:
       parallelToolCalls: false
       vision: true
       structuredOutput: true
+      reasoning: true
       contextTokens: 200000
 
 routes:

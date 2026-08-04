@@ -31,6 +31,7 @@ models:
       parallelToolCalls: true
       vision: true
       structuredOutput: true
+      reasoning: true
       contextTokens: 128000
 routes:
   personal-route:

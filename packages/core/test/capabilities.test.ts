@@ -11,6 +11,7 @@ const capableModel: ModelCapabilities = {
   parallelToolCalls: true,
   vision: true,
   structuredOutput: true,
+  reasoning: true,
   contextTokens: 128_000,
 };
 
@@ -21,6 +22,7 @@ describe('deriveRequiredCapabilities', () => {
       allowsParallelToolCalls: true,
       hasImageInput: true,
       hasStructuredOutput: true,
+      hasReasoning: true,
       estimatedInputTokens: 10_000,
       reservedOutputTokens: 4_000,
     });
@@ -30,6 +32,7 @@ describe('deriveRequiredCapabilities', () => {
       parallelToolCalls: true,
       vision: true,
       structuredOutput: true,
+      reasoning: true,
       minimumContextTokens: 14_000,
     });
     expect(Object.isFrozen(required)).toBe(true);
@@ -71,6 +74,7 @@ describe('supportsCapabilities', () => {
         parallelToolCalls: true,
         vision: true,
         structuredOutput: true,
+        reasoning: true,
         minimumContextTokens: 64_000,
       }),
     ).toBe(true);
