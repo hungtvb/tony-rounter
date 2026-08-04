@@ -66,7 +66,7 @@ Build the smallest verifiable routing core first. Each phase should end with exe
 
 ## Phase 4 — OpenAI Responses API
 
-Delivered text compatibility slices:
+Delivered compatibility slices:
 
 - authenticated non-streaming `/v1/responses` request parsing;
 - text message and instruction translation through the existing routed Chat Completions runtime;
@@ -83,12 +83,15 @@ Delivered text compatibility slices:
 - self-contained manual continuation with replayed assistant output, `function_call` items, and matching text-only `function_call_output` items;
 - deterministic translation to Chat Completions assistant `tool_calls` plus `tool` messages, including multiple parallel and sequential function-call turns;
 - rejection of orphan/duplicate/unresolved calls, duplicate outputs, incomplete statuses, message interleaving, and image/file tool outputs before provider invocation;
-- explicit rejection of image input, hosted-tool, refusal/reasoning, stored, background, and server-side `previous_response_id` chaining features;
+- capability-safe user `input_image` translation for HTTPS URLs and base64 PNG/JPEG/GIF/WEBP data URLs;
+- ordered text/image content mapping, `auto`/`low`/`high` detail preservation, and deterministic rejection of malformed or unsupported image references;
+- vision-capability filtering before provider invocation, without local image fetching, proxying, transformation, or persistence;
+- explicit rejection of `file_id`, `input_file`, hosted-tool, refusal/reasoning, stored, background, and server-side `previous_response_id` chaining features;
 - gateway contracts for authentication, missing provider, JSON/SSE translation, routed fallback, no post-output replay, disconnect, malformed streams, and protocol mismatch.
 
 Remaining:
 
-- image input and capability-preserving multimodal mapping;
+- Files API-backed image/file input and broader multimodal capability mapping;
 - refusal and reasoning stream events;
 - structured-output validation and compatibility matrix;
 - additional Codex-style fixtures;

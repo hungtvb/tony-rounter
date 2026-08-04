@@ -229,6 +229,121 @@ describe('POST /v1/responses', () => {
     });
   });
 
+  it('forwards mixed text and image input to a non-streaming upstream', async () => {
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: false,
+      body: {
+        id: 'chatcmpl_vision',
+        created: 123,
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'A cat.' },
+            finish_reason: 'stop',
+          },
+        ],
+      },
+    });
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        input: [
+          {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: 'What is shown?' },
+              {
+                type: 'input_image',
+                image_url: 'https://images.example.test/cat.png',
+                detail: 'low',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(createChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createChatCompletion.mock.calls[0]?.[0]).toEqual({
+      model: 'coding',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'What is shown?' },
+            {
+              type: 'image_url',
+              image_url: {
+                url: 'https://images.example.test/cat.png',
+                detail: 'low',
+              },
+            },
+          ],
+        },
+      ],
+      stream: false,
+    });
+    expect(response.json()).toMatchObject({
+      object: 'response',
+      model: 'coding',
+      output: [
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: 'A cat.' }],
+        },
+      ],
+    });
+  });
+
+  it('rejects malformed image input before calling the provider', async () => {
+    const createChatCompletion = vi.fn();
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_image',
+                image_url: 'http://images.example.test/cat.png',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: { code: 'unsupported_responses_feature' },
+    });
+    expect(createChatCompletion).not.toHaveBeenCalled();
+  });
+
   it('submits completed function output as non-streaming chat history', async () => {
     const createChatCompletion = vi.fn().mockResolvedValue({
       stream: false,
@@ -427,6 +542,62 @@ describe('POST /v1/responses', () => {
     expect(response.body).toContain('"tool_choice":"none"');
     expect(response.body).not.toContain('[DONE]');
     expect(response.body).not.toContain('event: error');
+  });
+
+  it('forwards image input for a streaming Responses request', async () => {
+    const image = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: true,
+      body: Readable.from([
+        sse(streamChunk('Image received.')),
+        sse(streamChunk(null, 'stop')),
+        sse('[DONE]'),
+      ]),
+    });
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        stream: true,
+        input: [
+          {
+            role: 'user',
+            content: [{ type: 'input_image', image_url: image }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(createChatCompletion.mock.calls[0]?.[0]).toEqual({
+      model: 'coding',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: image, detail: 'auto' },
+            },
+          ],
+        },
+      ],
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+    expect(response.body).toContain('event: response.output_text.delta');
+    expect(response.body).toContain('"text":"Image received."');
+    expect(response.body).toContain('event: response.completed');
   });
 
   it('streams a continuation after completed function output', async () => {

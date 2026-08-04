@@ -33,6 +33,8 @@ type JsonRecord = Readonly<Record<string, unknown>>;
 
 const FUNCTION_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const CALL_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
+const IMAGE_DATA_URL_PATTERN =
+  /^data:image\/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/]+={0,2})$/i;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -86,10 +88,99 @@ function validateOptionalNumber(
   }
 }
 
-function inputText(
+function hasPrefix(value: Uint8Array, prefix: readonly number[]): boolean {
+  return prefix.every((byte, index) => value[index] === byte);
+}
+
+function matchesImageFormat(mime: string, value: Uint8Array): boolean {
+  switch (mime.toLowerCase()) {
+    case 'png':
+      return hasPrefix(value, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    case 'jpg':
+    case 'jpeg':
+      return hasPrefix(value, [0xff, 0xd8, 0xff]);
+    case 'gif':
+      return (
+        Buffer.from(value.subarray(0, 6)).toString('ascii') === 'GIF87a' ||
+        Buffer.from(value.subarray(0, 6)).toString('ascii') === 'GIF89a'
+      );
+    case 'webp':
+      return (
+        Buffer.from(value.subarray(0, 4)).toString('ascii') === 'RIFF' &&
+        Buffer.from(value.subarray(8, 12)).toString('ascii') === 'WEBP'
+      );
+    default:
+      return false;
+  }
+}
+
+function imageUrl(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    return invalid('input_image image_url must be a non-empty string');
+  }
+  if (value !== value.trim()) {
+    return invalid(
+      'input_image image_url must not contain surrounding whitespace',
+    );
+  }
+  if (value.slice(0, 5).toLowerCase() === 'data:') {
+    const match = IMAGE_DATA_URL_PATTERN.exec(value);
+    if (!match) {
+      return invalid(
+        'input_image data URLs must contain base64 PNG, JPEG, GIF, or WEBP image data',
+      );
+    }
+    const mime = match[1];
+    const payload = match[2];
+    if (mime === undefined || payload === undefined) {
+      return invalid('input_image data URL contains invalid base64 image data');
+    }
+    if (payload.length % 4 === 1) {
+      return invalid('input_image data URL contains invalid base64 image data');
+    }
+    const normalized = payload.replace(/=+$/, '');
+    const decoded = Buffer.from(payload, 'base64');
+    if (
+      decoded.length === 0 ||
+      decoded.toString('base64').replace(/=+$/, '') !== normalized ||
+      !matchesImageFormat(mime, decoded)
+    ) {
+      return invalid(
+        'input_image data URL bytes must match the declared image format',
+      );
+    }
+    return value;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return invalid(
+      'input_image image_url must be a valid URL or image data URL',
+    );
+  }
+  if (parsed.protocol !== 'https:') {
+    return unsupported(
+      'this phase supports only HTTPS image URLs and image data URLs',
+    );
+  }
+  if (parsed.username.length > 0 || parsed.password.length > 0) {
+    return invalid('input_image image_url must not contain URL credentials');
+  }
+  return value;
+}
+
+function imageDetail(value: unknown): 'auto' | 'low' | 'high' {
+  if (value === undefined) return 'auto';
+  if (value === 'auto' || value === 'low' || value === 'high') return value;
+  return invalid('input_image detail must be auto, low, or high');
+}
+
+function inputContent(
   content: unknown,
   role: 'user' | 'assistant' | 'system' | 'developer',
-): string {
+): string | readonly JsonRecord[] {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) {
     return invalid('message content must be a string or an array');
@@ -98,25 +189,60 @@ function inputText(
     return invalid('message content array must contain at least one item');
   }
 
-  const text: string[] = [];
+  const parts: JsonRecord[] = [];
+  let hasImage = false;
   for (const part of content) {
     if (!isRecord(part)) {
       return invalid('input content items must be JSON objects');
     }
-    const supportedType =
+
+    if (
       part.type === 'input_text' ||
-      (role === 'assistant' && part.type === 'output_text');
-    if (!supportedType) {
-      return unsupported(
-        'this phase supports only input_text content and replayed assistant output_text content',
-      );
+      (role === 'assistant' && part.type === 'output_text')
+    ) {
+      if (typeof part.text !== 'string') {
+        return invalid('text content must contain a string text value');
+      }
+      parts.push({ type: 'text', text: part.text });
+      continue;
     }
-    if (typeof part.text !== 'string') {
-      return invalid('input_text content must contain a string text value');
+
+    if (part.type === 'input_image') {
+      if (role !== 'user') {
+        return unsupported(
+          'this phase supports input_image only in user messages',
+        );
+      }
+      if (part.file_id !== undefined && part.file_id !== null) {
+        return unsupported(
+          'input_image file_id is not implemented in this phase',
+        );
+      }
+      if (part.image_url === undefined) {
+        return invalid('input_image must contain image_url');
+      }
+      hasImage = true;
+      parts.push({
+        type: 'image_url',
+        image_url: {
+          url: imageUrl(part.image_url),
+          detail: imageDetail(part.detail),
+        },
+      });
+      continue;
     }
-    text.push(part.text);
+
+    if (part.type === 'input_file') {
+      return unsupported('input_file is not implemented in this phase');
+    }
+
+    return unsupported(
+      'this phase supports input_text, user input_image, and replayed assistant output_text content',
+    );
   }
-  return text.join('');
+
+  if (hasImage) return parts;
+  return parts.map((part) => String(part.text)).join('');
 }
 
 function toolOutputText(output: unknown): string {
@@ -205,7 +331,7 @@ function responseInputMessages(
       validateCompletedStatus(item.status, 'message input item');
       const message: Record<string, unknown> = {
         role: item.role,
-        content: inputText(item.content, item.role),
+        content: inputContent(item.content, item.role),
       };
       messages.push(message);
       assistantToolMessage = item.role === 'assistant' ? message : undefined;

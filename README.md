@@ -12,7 +12,7 @@ Implemented and verified:
 - generated local bearer token and redacted JSON logs
 - authenticated `GET /v1/models`
 - authenticated `POST /v1/chat/completions`
-- authenticated `POST /v1/responses` compatibility for text input, custom function tools, and self-contained tool-result continuation across JSON and SSE streaming
+- authenticated `POST /v1/responses` compatibility for text/image input, custom function tools, and self-contained tool-result continuation across JSON and SSE streaming
 - non-streaming and validated SSE streaming proxy for Chat Completions
 - upstream timeout, disconnect propagation, redirect rejection, and normalized errors
 - versioned YAML routing registry
@@ -26,9 +26,9 @@ Implemented and verified:
 - optional loopback-only managed config generations with atomic apply, hash-verified rollback, and restart-required state
 - bounded per-account health probes that return status categories and latency without raw provider responses
 
-The Responses compatibility layer translates supported requests through the same routed Chat Completions runtime, preserving public model IDs and route/provider/account headers. Text and custom function-call streams are emitted as ordered Responses lifecycle events with monotonic sequence numbers. Function argument deltas are aggregated exactly into completed output items; malformed or truncated upstream data after output becomes a terminal `error` event and never triggers fallback after emission.
+The Responses compatibility layer translates supported requests through the same routed Chat Completions runtime, preserving public model IDs and route/provider/account headers. User messages may mix text with HTTPS image URLs or base64 PNG/JPEG/GIF/WEBP data URLs; image detail (`auto`, `low`, or `high`) and original content order are preserved while routing requires a vision-capable model. Tony Router never fetches, proxies, resizes, or persists image input locally. Text and custom function-call streams are emitted as ordered Responses lifecycle events with monotonic sequence numbers. Function argument deltas are aggregated exactly into completed output items; malformed or truncated upstream data after output becomes a terminal `error` event and never triggers fallback after emission.
 
-Clients can complete a custom function loop without gateway persistence by resending prior assistant `message` / `function_call` items together with matching `function_call_output` items. Tony Router validates that every call ID has exactly one preceding call and one completed text output before forwarding the continuation. Server-side `previous_response_id`, image/file tool outputs, hosted tools, refusal/reasoning events, background execution, stored responses, and automatic tool execution remain explicitly unsupported.
+Clients can complete a custom function loop without gateway persistence by resending prior assistant `message` / `function_call` items together with matching `function_call_output` items. Tony Router validates that every call ID has exactly one preceding call and one completed text output before forwarding the continuation. Responses `file_id`, `input_file`, image/file tool outputs, server-side `previous_response_id`, hosted tools, refusal/reasoning events, background execution, stored responses, and automatic tool execution remain explicitly unsupported.
 
 The routing engine lives in `@tony-router/core`; the Fastify gateway wires profiles to provider accounts and keeps public model IDs stable across JSON and SSE responses.
 
@@ -89,6 +89,26 @@ curl --no-buffer http://127.0.0.1:8787/v1/responses \
       }
     }],
     "tool_choice": "required",
+    "stream": true
+  }'
+
+# Multimodal input is forwarded only to a vision-capable route.
+curl --no-buffer http://127.0.0.1:8787/v1/responses \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "tony-auto",
+    "input": [{
+      "role": "user",
+      "content": [
+        {"type": "input_text", "text": "Describe this image."},
+        {
+          "type": "input_image",
+          "image_url": "https://images.example.com/photo.jpg",
+          "detail": "high"
+        }
+      ]
+    }],
     "stream": true
   }'
 
@@ -173,7 +193,7 @@ Client / Coding Agent
         v
 Protocol Gateway
   - OpenAI Chat Completions
-  - OpenAI Responses (text/function JSON + SSE compatibility)
+  - OpenAI Responses (text/image/function JSON + SSE compatibility)
   - Anthropic Messages (planned)
         |
         v
