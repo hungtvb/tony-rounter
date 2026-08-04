@@ -1,6 +1,7 @@
 import { GatewayHttpError } from '../errors.js';
 import type {
   ResponsesFunctionTool,
+  ResponsesTextFormat,
   ResponsesToolChoice,
 } from './responses.js';
 
@@ -15,6 +16,7 @@ export interface ResponsesStreamOptions {
   readonly topP?: number;
   readonly tools?: readonly ResponsesFunctionTool[];
   readonly toolChoice?: ResponsesToolChoice;
+  readonly textFormat?: ResponsesTextFormat;
   readonly nowSeconds?: () => number;
 }
 
@@ -613,7 +615,7 @@ export class ResponsesStreamEncoder {
       reasoning: { effort: null, summary: null },
       store: false,
       temperature: this.#options.temperature ?? 1,
-      text: { format: { type: 'text' } },
+      text: { format: this.#options.textFormat ?? { type: 'text' } },
       tool_choice: this.#options.toolChoice ?? 'auto',
       tools: this.#options.tools ?? [],
       top_p: this.#options.topP ?? 1,

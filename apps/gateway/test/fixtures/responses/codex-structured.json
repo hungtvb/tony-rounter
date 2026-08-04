@@ -1,0 +1,52 @@
+{
+  "model": "coding",
+  "instructions": "Return a deterministic edit plan.",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Plan the smallest safe patch for src/index.ts."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "read_file",
+      "description": "Read a UTF-8 source file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" }
+        },
+        "required": ["path"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  ],
+  "tool_choice": "auto",
+  "text": {
+    "format": {
+      "type": "json_schema",
+      "name": "edit_plan",
+      "description": "A bounded source-edit plan.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" },
+          "files": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["summary", "files"],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  }
+}

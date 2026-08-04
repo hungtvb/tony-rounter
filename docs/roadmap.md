@@ -86,6 +86,9 @@ Delivered compatibility slices:
 - capability-safe user `input_image` translation for HTTPS URLs and base64 PNG/JPEG/GIF/WEBP data URLs;
 - ordered text/image content mapping, `auto`/`low`/`high` detail preservation, and deterministic rejection of malformed or unsupported image references;
 - vision-capability filtering before provider invocation, without local image fetching, proxying, transformation, or persistence;
+- Responses `text.format.type: json_schema` validation and lossless translation to Chat Completions Structured Outputs;
+- structured-output capability filtering before provider invocation, with explicit rejection of legacy JSON mode, malformed schemas, unsupported fields, and silent downgrade paths;
+- Codex-style JSON/SSE compatibility fixtures combining instructions, function tools, image input, and strict structured output;
 - explicit rejection of `file_id`, `input_file`, hosted-tool, refusal/reasoning, stored, background, and server-side `previous_response_id` chaining features;
 - gateway contracts for authentication, missing provider, JSON/SSE translation, routed fallback, no post-output replay, disconnect, malformed streams, and protocol mismatch.
 
@@ -93,8 +96,6 @@ Remaining:
 
 - Files API-backed image/file input and broader multimodal capability mapping;
 - refusal and reasoning stream events;
-- structured-output validation and compatibility matrix;
-- additional Codex-style fixtures;
 - server-side `previous_response_id` chaining and response persistence;
 - optional stored/background semantics only after their ownership and persistence boundaries are defined.
 
