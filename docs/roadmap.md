@@ -89,13 +89,14 @@ Delivered compatibility slices:
 - Responses `text.format.type: json_schema` validation and lossless translation to Chat Completions Structured Outputs;
 - structured-output capability filtering before provider invocation, with explicit rejection of legacy JSON mode, malformed schemas, unsupported fields, and silent downgrade paths;
 - Codex-style JSON/SSE compatibility fixtures combining instructions, function tools, image input, and strict structured output;
-- explicit rejection of `file_id`, `input_file`, hosted-tool, refusal/reasoning, stored, background, and server-side `previous_response_id` chaining features;
+- bounded refusal normalization plus ordered `response.refusal.delta` / `done` lifecycle events;
+- bounded reasoning request forwarding, reasoning-capability filtering, explicit provider-supplied reasoning-summary lifecycle events, and reasoning-token usage preservation;
+- explicit rejection of `file_id`, `input_file`, hosted-tool, encrypted/private reasoning content, stored, background, and server-side `previous_response_id` chaining features;
 - gateway contracts for authentication, missing provider, JSON/SSE translation, routed fallback, no post-output replay, disconnect, malformed streams, and protocol mismatch.
 
 Remaining:
 
 - Files API-backed image/file input and broader multimodal capability mapping;
-- refusal and reasoning stream events;
 - server-side `previous_response_id` chaining and response persistence;
 - optional stored/background semantics only after their ownership and persistence boundaries are defined.
 

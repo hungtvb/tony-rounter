@@ -38,6 +38,15 @@ function hasStructuredOutput(responseFormat: unknown): boolean {
   );
 }
 
+function hasReasoning(value: UnknownRecord): boolean {
+  const effort = value.reasoning_effort;
+  const summary = value.reasoning_summary;
+  return (
+    (typeof effort === 'string' && effort !== 'none') ||
+    (typeof summary === 'string' && summary.length > 0)
+  );
+}
+
 function hasConfiguredTools(tools: unknown): boolean {
   return Array.isArray(tools) && tools.length > 0;
 }
@@ -83,6 +92,7 @@ export function deriveChatRequestCapabilities(
       (requestHasTools && input.parallel_tool_calls === true),
     hasImageInput: hasImageInput(input.messages),
     hasStructuredOutput: hasStructuredOutput(input.response_format),
+    hasReasoning: hasReasoning(input),
     ...(options.estimatedInputTokens !== undefined
       ? { estimatedInputTokens: options.estimatedInputTokens }
       : {}),

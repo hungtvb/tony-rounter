@@ -36,6 +36,7 @@ Every configured route appears in `decision.candidates`, including routes outsid
 - `missing_parallel_tool_calls`
 - `missing_vision`
 - `missing_structured_output`
+- `missing_reasoning`
 - `insufficient_context`
 
 An accepted candidate has an empty rejection list and a deterministic score. No selected route is returned when every candidate is rejected.

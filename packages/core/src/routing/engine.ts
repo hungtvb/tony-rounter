@@ -36,6 +36,7 @@ function snapshotRequirements(
     parallelToolCalls: required.parallelToolCalls,
     vision: required.vision,
     structuredOutput: required.structuredOutput,
+    ...(required.reasoning === true ? { reasoning: true } : {}),
     ...(required.minimumContextTokens !== undefined
       ? { minimumContextTokens: required.minimumContextTokens }
       : {}),
@@ -72,6 +73,13 @@ function capabilityRejections(
   if (required.structuredOutput && !capabilities.structuredOutput) {
     rejections.push({
       code: 'missing_structured_output',
+      required: true,
+      actual: false,
+    });
+  }
+  if (required.reasoning && !capabilities.reasoning) {
+    rejections.push({
+      code: 'missing_reasoning',
       required: true,
       actual: false,
     });

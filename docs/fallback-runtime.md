@@ -42,7 +42,7 @@ The runtime enforces all limits even when an operation ignores its abort signal.
 
 ## Selection and affinity
 
-Fallback reuses the deterministic capability-aware selector. A failed route is excluded only for the current execution, so a fallback can never bypass required tools, vision, structured output, or context size. Session affinity is updated only after an attempt succeeds.
+Fallback reuses the deterministic capability-aware selector. A failed route is excluded only for the current execution, so a fallback can never bypass required tools, vision, structured output, reasoning, or context size. Session affinity is updated only after an attempt succeeds.
 
 ## Trace
 

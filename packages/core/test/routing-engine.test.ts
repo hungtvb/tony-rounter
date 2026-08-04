@@ -25,6 +25,7 @@ models:
       parallelToolCalls: true
       vision: true
       structuredOutput: true
+      reasoning: true
       contextTokens: 128000
   limited:
     provider: provider
@@ -226,6 +227,7 @@ describe('selectRoute', () => {
         parallelToolCalls: true,
         vision: true,
         structuredOutput: true,
+        reasoning: true,
         minimumContextTokens: 100_000,
       },
       routeStates: {
@@ -257,6 +259,7 @@ describe('selectRoute', () => {
     expect(candidate(decision.candidates, 'context').rejections).toEqual([
       { code: 'missing_parallel_tool_calls', required: true, actual: false },
       { code: 'missing_vision', required: true, actual: false },
+      { code: 'missing_reasoning', required: true, actual: false },
       { code: 'insufficient_context', required: 100_000, actual: 64_000 },
     ]);
   });

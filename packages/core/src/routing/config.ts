@@ -113,6 +113,7 @@ function parseCapabilities(value: unknown, path: string): ModelCapabilities {
       'parallelToolCalls',
       'vision',
       'structuredOutput',
+      'reasoning',
       'contextTokens',
     ],
     path,
@@ -135,6 +136,9 @@ function parseCapabilities(value: unknown, path: string): ModelCapabilities {
       input.structuredOutput,
       `${path}.structuredOutput`,
     ),
+    reasoning: own(input, 'reasoning')
+      ? boolean(input.reasoning, `${path}.reasoning`)
+      : false,
     contextTokens: integer(
       input.contextTokens,
       `${path}.contextTokens`,

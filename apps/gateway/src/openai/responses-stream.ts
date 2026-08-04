@@ -1,6 +1,7 @@
 import { GatewayHttpError } from '../errors.js';
 import type {
   ResponsesFunctionTool,
+  ResponsesReasoningConfig,
   ResponsesTextFormat,
   ResponsesToolChoice,
 } from './responses.js';
@@ -17,6 +18,7 @@ export interface ResponsesStreamOptions {
   readonly tools?: readonly ResponsesFunctionTool[];
   readonly toolChoice?: ResponsesToolChoice;
   readonly textFormat?: ResponsesTextFormat;
+  readonly reasoning?: ResponsesReasoningConfig;
   readonly nowSeconds?: () => number;
 }
 
@@ -24,7 +26,15 @@ interface MessageOutputState {
   readonly kind: 'message';
   readonly outputIndex: number;
   readonly itemId: string;
+  readonly contentType: 'output_text' | 'refusal';
   text: string;
+}
+
+interface ReasoningOutputState {
+  readonly kind: 'reasoning';
+  readonly outputIndex: number;
+  readonly itemId: string;
+  summary: string;
 }
 
 interface FunctionCallOutputState {
@@ -37,7 +47,8 @@ interface FunctionCallOutputState {
   arguments: string;
 }
 
-type OutputState = MessageOutputState | FunctionCallOutputState;
+type OutputState =
+  MessageOutputState | ReasoningOutputState | FunctionCallOutputState;
 
 const FUNCTION_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const CALL_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
@@ -108,12 +119,19 @@ function usage(value: unknown): JsonRecord | undefined {
     return undefined;
   }
 
+  const completionDetails = isRecord(value.completion_tokens_details)
+    ? value.completion_tokens_details
+    : undefined;
+  const reasoningTokens = safeInteger(
+    completionDetails?.reasoning_tokens,
+    'completion_tokens_details.reasoning_tokens',
+  );
   const normalizedInput = inputTokens ?? 0;
   const normalizedOutput = outputTokens ?? 0;
   return {
     input_tokens: normalizedInput,
     output_tokens: normalizedOutput,
-    output_tokens_details: { reasoning_tokens: 0 },
+    output_tokens_details: { reasoning_tokens: reasoningTokens ?? 0 },
     total_tokens: totalTokens ?? normalizedInput + normalizedOutput,
   };
 }
@@ -160,6 +178,7 @@ export class ResponsesStreamEncoder {
   #responseId: string | undefined;
   #createdAt: number | undefined;
   #message: MessageOutputState | undefined;
+  #reasoning: ReasoningOutputState | undefined;
   #usage: JsonRecord | undefined;
 
   constructor(options: ResponsesStreamOptions) {
@@ -218,21 +237,25 @@ export class ResponsesStreamEncoder {
     if (delta.role !== undefined && delta.role !== 'assistant') {
       return unsupported('Responses streaming supports only assistant output');
     }
-    if (delta.function_call !== undefined || delta.refusal !== undefined) {
-      return unsupported('Upstream emitted an unsupported streaming delta');
+    if (delta.function_call !== undefined) {
+      return unsupported('Upstream emitted a legacy function_call delta');
     }
-    if (
-      typeof delta.content === 'string' &&
-      delta.content.length > 0 &&
-      Array.isArray(delta.tool_calls) &&
-      delta.tool_calls.length > 0
-    ) {
+    const emittedKinds = [
+      typeof delta.content === 'string' && delta.content.length > 0,
+      typeof delta.refusal === 'string' && delta.refusal.length > 0,
+      typeof delta.reasoning_summary === 'string' &&
+        delta.reasoning_summary.length > 0,
+      Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0,
+    ].filter(Boolean).length;
+    if (emittedKinds > 1) {
       return unsupported(
-        'Upstream emitted text and function calls in the same delta',
+        'Upstream emitted multiple output kinds in the same delta',
       );
     }
 
-    events.push(...this.#textEvents(delta.content));
+    events.push(...this.#reasoningEvents(delta.reasoning_summary));
+    events.push(...this.#messageEvents(delta.content, 'output_text'));
+    events.push(...this.#messageEvents(delta.refusal, 'refusal'));
     events.push(...this.#toolCallEvents(delta.tool_calls));
     this.#finish(choice.finish_reason);
     return events;
@@ -257,12 +280,68 @@ export class ResponsesStreamEncoder {
     ];
   }
 
-  #textEvents(value: unknown): readonly string[] {
+  #reasoningEvents(value: unknown): readonly string[] {
     if (value === undefined || value === null) return [];
     if (typeof value !== 'string') {
-      return streamFailure('Upstream text delta must be a string');
+      return streamFailure('Upstream reasoning_summary delta must be a string');
     }
     if (value.length === 0) return [];
+    if (this.#outputs.some((output) => output.kind !== 'reasoning')) {
+      return streamFailure(
+        'Upstream emitted reasoning after visible output started',
+      );
+    }
+
+    const events: string[] = [];
+    if (!this.#reasoning) {
+      const reasoning: ReasoningOutputState = {
+        kind: 'reasoning',
+        outputIndex: this.#outputs.length,
+        itemId: `rs_${idSuffix(this.#requiredUpstreamId())}`,
+        summary: '',
+      };
+      this.#reasoning = reasoning;
+      this.#outputs.push(reasoning);
+      events.push(
+        this.#event('response.output_item.added', {
+          output_index: reasoning.outputIndex,
+          item: this.#reasoningItem(reasoning, 'in_progress'),
+        }),
+        this.#event('response.reasoning_summary_part.added', {
+          item_id: reasoning.itemId,
+          output_index: reasoning.outputIndex,
+          summary_index: 0,
+          part: { type: 'summary_text', text: '' },
+        }),
+      );
+    }
+
+    this.#reasoning.summary += value;
+    events.push(
+      this.#event('response.reasoning_summary_text.delta', {
+        item_id: this.#reasoning.itemId,
+        output_index: this.#reasoning.outputIndex,
+        summary_index: 0,
+        delta: value,
+      }),
+    );
+    return events;
+  }
+
+  #messageEvents(
+    value: unknown,
+    contentType: 'output_text' | 'refusal',
+  ): readonly string[] {
+    if (value === undefined || value === null) return [];
+    if (typeof value !== 'string') {
+      return streamFailure(
+        `Upstream ${contentType === 'refusal' ? 'refusal' : 'text'} delta must be a string`,
+      );
+    }
+    if (value.length === 0) return [];
+    if (contentType === 'refusal' && this.#toolCalls.size > 0) {
+      return streamFailure('Upstream emitted refusal after a function call');
+    }
 
     const events: string[] = [];
     if (!this.#message) {
@@ -270,6 +349,7 @@ export class ResponsesStreamEncoder {
         kind: 'message',
         outputIndex: this.#outputs.length,
         itemId: `msg_${idSuffix(this.#requiredUpstreamId())}`,
+        contentType,
         text: '',
       };
       this.#message = message;
@@ -283,31 +363,36 @@ export class ResponsesStreamEncoder {
           item_id: message.itemId,
           output_index: message.outputIndex,
           content_index: 0,
-          part: {
-            type: 'output_text',
-            text: '',
-            annotations: [],
-            logprobs: [],
-          },
+          part: this.#messagePart(message),
         }),
       );
+    } else if (this.#message.contentType !== contentType) {
+      return streamFailure('Upstream switched between text and refusal output');
     }
 
     this.#message.text += value;
     events.push(
-      this.#event('response.output_text.delta', {
-        item_id: this.#message.itemId,
-        output_index: this.#message.outputIndex,
-        content_index: 0,
-        delta: value,
-        logprobs: [],
-      }),
+      this.#event(
+        contentType === 'refusal'
+          ? 'response.refusal.delta'
+          : 'response.output_text.delta',
+        {
+          item_id: this.#message.itemId,
+          output_index: this.#message.outputIndex,
+          content_index: 0,
+          delta: value,
+          ...(contentType === 'output_text' ? { logprobs: [] } : {}),
+        },
+      ),
     );
     return events;
   }
 
   #toolCallEvents(value: unknown): readonly string[] {
     if (value === undefined || value === null) return [];
+    if (this.#message?.contentType === 'refusal') {
+      return streamFailure('Upstream emitted tool calls after a refusal');
+    }
     if (!Array.isArray(value) || !value.every(isRecord)) {
       return streamFailure('Upstream tool call deltas must be an array');
     }
@@ -494,22 +579,45 @@ export class ResponsesStreamEncoder {
     const events: string[] = [];
     const completedOutputs: JsonRecord[] = [];
     for (const output of this.#outputs) {
-      if (output.kind === 'message') {
-        const part = {
-          type: 'output_text',
-          text: output.text,
-          annotations: [],
-          logprobs: [],
-        };
-        const item = this.#messageItem(output, 'completed');
+      if (output.kind === 'reasoning') {
+        const part = { type: 'summary_text', text: output.summary };
+        const item = this.#reasoningItem(output, 'completed');
         events.push(
-          this.#event('response.output_text.done', {
+          this.#event('response.reasoning_summary_text.done', {
             item_id: output.itemId,
             output_index: output.outputIndex,
-            content_index: 0,
-            text: output.text,
-            logprobs: [],
+            summary_index: 0,
+            text: output.summary,
           }),
+          this.#event('response.reasoning_summary_part.done', {
+            item_id: output.itemId,
+            output_index: output.outputIndex,
+            summary_index: 0,
+            part,
+          }),
+          this.#event('response.output_item.done', {
+            output_index: output.outputIndex,
+            item,
+          }),
+        );
+        completedOutputs.push(item);
+      } else if (output.kind === 'message') {
+        const part = this.#messagePart(output, true);
+        const item = this.#messageItem(output, 'completed');
+        events.push(
+          this.#event(
+            output.contentType === 'refusal'
+              ? 'response.refusal.done'
+              : 'response.output_text.done',
+            {
+              item_id: output.itemId,
+              output_index: output.outputIndex,
+              content_index: 0,
+              ...(output.contentType === 'refusal'
+                ? { refusal: output.text }
+                : { text: output.text, logprobs: [] }),
+            },
+          ),
           this.#event('response.content_part.done', {
             item_id: output.itemId,
             output_index: output.outputIndex,
@@ -556,6 +664,18 @@ export class ResponsesStreamEncoder {
     return wire(event);
   }
 
+  #messagePart(output: MessageOutputState, completed = false): JsonRecord {
+    if (output.contentType === 'refusal') {
+      return { type: 'refusal', refusal: completed ? output.text : '' };
+    }
+    return {
+      type: 'output_text',
+      text: completed ? output.text : '',
+      annotations: [],
+      logprobs: [],
+    };
+  }
+
   #messageItem(
     output: MessageOutputState,
     status: 'in_progress' | 'completed',
@@ -565,16 +685,21 @@ export class ResponsesStreamEncoder {
       type: 'message',
       status,
       role: 'assistant',
-      content:
+      content: status === 'completed' ? [this.#messagePart(output, true)] : [],
+    };
+  }
+
+  #reasoningItem(
+    output: ReasoningOutputState,
+    status: 'in_progress' | 'completed',
+  ): JsonRecord {
+    return {
+      id: output.itemId,
+      type: 'reasoning',
+      status,
+      summary:
         status === 'completed'
-          ? [
-              {
-                type: 'output_text',
-                text: output.text,
-                annotations: [],
-                logprobs: [],
-              },
-            ]
+          ? [{ type: 'summary_text', text: output.summary }]
           : [],
     };
   }
@@ -612,7 +737,10 @@ export class ResponsesStreamEncoder {
       output,
       parallel_tool_calls: this.#options.parallelToolCalls ?? true,
       previous_response_id: null,
-      reasoning: { effort: null, summary: null },
+      reasoning: {
+        effort: this.#options.reasoning?.effort ?? null,
+        summary: this.#options.reasoning?.summary ?? null,
+      },
       store: false,
       temperature: this.#options.temperature ?? 1,
       text: { format: this.#options.textFormat ?? { type: 'text' } },
