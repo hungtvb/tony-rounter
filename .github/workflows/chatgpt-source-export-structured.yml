@@ -1,0 +1,70 @@
+name: ChatGPT Source Export Structured
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/chatgpt-source-export-structured.yml'
+
+permissions:
+  contents: read
+
+env:
+  TARGET_SHA: 7cfed04e7b7d11cc2726661bb22b7a7f9025f0c0
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source with history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify and package source
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git fsck --full --no-dangling
+          test -z "$(git status --porcelain)"
+
+          out="$RUNNER_TEMP/source-export"
+          mkdir -p "$out"
+          archive="$out/tony-rounter-main-${TARGET_SHA}.tar.gz"
+          tar -czf "$archive" --exclude='./node_modules' --exclude='./.caas-tools' .
+          archive_name=$(basename "$archive")
+          (cd "$out" && sha256sum "$archive_name" > SHA256SUMS)
+          archive_sha=$(awk '{print $1}' "$out/SHA256SUMS")
+          size=$(stat -c '%s' "$archive")
+          tracked=$(git ls-files | wc -l | tr -d ' ')
+          commits=$(git rev-list --count HEAD)
+
+          cat > "$out/job-report.json" <<JSON
+          {
+            "job": "tony-router-source-bootstrap",
+            "repository": "hungtvb/tony-rounter",
+            "source_sha": "$TARGET_SHA",
+            "archive": "$archive_name",
+            "size_bytes": $size,
+            "sha256": "$archive_sha",
+            "tracked_files": $tracked,
+            "commit_count": $commits,
+            "verification": "exact HEAD, clean status, full git fsck passed"
+          }
+          JSON
+          echo "directory=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tony-rounter-main-with-git-7cfed04e
+          path: ${{ steps.package.outputs.directory }}
+          if-no-files-found: error
+          retention-days: 1
