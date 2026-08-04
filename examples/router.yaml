@@ -20,6 +20,7 @@ models:
       parallelToolCalls: true
       vision: false
       structuredOutput: true
+      fileInput: false
       reasoning: true
       contextTokens: 128000
 
@@ -31,6 +32,7 @@ models:
       parallelToolCalls: false
       vision: true
       structuredOutput: true
+      fileInput: true
       reasoning: true
       contextTokens: 200000
 

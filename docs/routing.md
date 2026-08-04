@@ -5,7 +5,7 @@ Tony Router routing configuration is versioned independently from gateway enviro
 ## Registry layers
 
 - `providers` identify adapter kinds. Phase 2 supports `openai-compatible`.
-- `models` bind an upstream model name to hard capabilities.
+- `models` bind an upstream model name to hard capabilities, including `fileInput` for Chat-compatible inline file parts.
 - `routes` make a model selectable and assign route-level priority.
 - `profiles` define ordered policy candidates and profile-level priority.
 
@@ -36,6 +36,7 @@ Every configured route appears in `decision.candidates`, including routes outsid
 - `missing_parallel_tool_calls`
 - `missing_vision`
 - `missing_structured_output`
+- `missing_file_input`
 - `missing_reasoning`
 - `insufficient_context`
 

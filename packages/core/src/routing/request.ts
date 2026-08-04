@@ -14,21 +14,27 @@ function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function hasImagePart(content: unknown): boolean {
+function hasContentPart(content: unknown, types: ReadonlySet<string>): boolean {
   if (!Array.isArray(content)) return false;
 
-  return content.some((part) => {
-    if (!isRecord(part) || typeof part.type !== 'string') return false;
-    return part.type === 'image_url' || part.type === 'input_image';
-  });
-}
-
-function hasImageInput(messages: unknown): boolean {
-  if (!Array.isArray(messages)) return false;
-  return messages.some(
-    (message) => isRecord(message) && hasImagePart(message.content),
+  return content.some(
+    (part) =>
+      isRecord(part) && typeof part.type === 'string' && types.has(part.type),
   );
 }
+
+function messagesContainPart(
+  messages: unknown,
+  types: ReadonlySet<string>,
+): boolean {
+  if (!Array.isArray(messages)) return false;
+  return messages.some(
+    (message) => isRecord(message) && hasContentPart(message.content, types),
+  );
+}
+
+const IMAGE_PART_TYPES = new Set(['image_url', 'input_image']);
+const FILE_PART_TYPES = new Set(['file', 'input_file']);
 
 function hasStructuredOutput(responseFormat: unknown): boolean {
   if (!isRecord(responseFormat)) return false;
@@ -90,7 +96,8 @@ export function deriveChatRequestCapabilities(
     allowsParallelToolCalls:
       history.hasParallelToolCalls ||
       (requestHasTools && input.parallel_tool_calls === true),
-    hasImageInput: hasImageInput(input.messages),
+    hasImageInput: messagesContainPart(input.messages, IMAGE_PART_TYPES),
+    hasFileInput: messagesContainPart(input.messages, FILE_PART_TYPES),
     hasStructuredOutput: hasStructuredOutput(input.response_format),
     hasReasoning: hasReasoning(input),
     ...(options.estimatedInputTokens !== undefined

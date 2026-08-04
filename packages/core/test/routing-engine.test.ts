@@ -25,6 +25,7 @@ models:
       parallelToolCalls: true
       vision: true
       structuredOutput: true
+      fileInput: true
       reasoning: true
       contextTokens: 128000
   limited:
@@ -131,6 +132,20 @@ describe('selectRoute', () => {
         actual: false,
       },
     ]);
+  });
+
+  it('routes file input only to a file-capable model', () => {
+    const decision = selectRoute(CONFIG, {
+      requiredCapabilities: { ...NO_REQUIREMENTS, fileInput: true },
+    });
+
+    expect(decision.selected?.routeId).toBe('alpha');
+    expect(candidate(decision.candidates, 'context')).toMatchObject({
+      accepted: false,
+      rejections: [
+        { code: 'missing_file_input', required: true, actual: false },
+      ],
+    });
   });
 
   it('accepts exact context boundaries and rejects one token beyond them', () => {

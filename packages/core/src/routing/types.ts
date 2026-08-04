@@ -65,6 +65,7 @@ export type RouteRejectionCode =
   | 'missing_parallel_tool_calls'
   | 'missing_vision'
   | 'missing_structured_output'
+  | 'missing_file_input'
   | 'missing_reasoning'
   | 'insufficient_context';
 

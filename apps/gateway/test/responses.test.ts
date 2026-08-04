@@ -12,6 +12,8 @@ import {
 
 const TOKEN = 'responses-test-token-'.padEnd(48, 'x');
 const apps: FastifyInstance[] = [];
+const PDF_BASE64 =
+  'JVBERi0xLjQKMSAwIG9iago8PD4+CmVuZG9iagp0cmFpbGVyCjw8Pj4KJSVFT0YK';
 
 function config(): GatewayConfig {
   return {
@@ -307,6 +309,121 @@ describe('POST /v1/responses', () => {
     });
   });
 
+  it('forwards mixed text and inline PDF input to a non-streaming upstream', async () => {
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: false,
+      body: {
+        id: 'chatcmpl_pdf',
+        created: 123,
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'PDF received.' },
+            finish_reason: 'stop',
+          },
+        ],
+      },
+    });
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        input: [
+          {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: 'Summarize ' },
+              {
+                type: 'input_file',
+                file_data: PDF_BASE64,
+                filename: 'spec.pdf',
+              },
+              { type: 'input_text', text: ' briefly.' },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(createChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createChatCompletion.mock.calls[0]?.[0]).toEqual({
+      model: 'coding',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Summarize ' },
+            {
+              type: 'file',
+              file: { file_data: PDF_BASE64, filename: 'spec.pdf' },
+            },
+            { type: 'text', text: ' briefly.' },
+          ],
+        },
+      ],
+      stream: false,
+    });
+    expect(response.json()).toMatchObject({
+      object: 'response',
+      model: 'coding',
+      output: [
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: 'PDF received.' }],
+        },
+      ],
+    });
+  });
+
+  it('rejects malformed inline PDF before calling the provider', async () => {
+    const createChatCompletion = vi.fn();
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_file',
+                file_data: Buffer.from('not a pdf').toString('base64'),
+                filename: 'spec.pdf',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: { code: 'invalid_request' },
+    });
+    expect(createChatCompletion).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed image input before calling the provider', async () => {
     const createChatCompletion = vi.fn();
     const app = track(
@@ -597,6 +714,67 @@ describe('POST /v1/responses', () => {
     });
     expect(response.body).toContain('event: response.output_text.delta');
     expect(response.body).toContain('"text":"Image received."');
+    expect(response.body).toContain('event: response.completed');
+  });
+
+  it('forwards inline PDF input for a streaming Responses request', async () => {
+    const createChatCompletion = vi.fn().mockResolvedValue({
+      stream: true,
+      body: Readable.from([
+        sse(streamChunk('PDF received.')),
+        sse(streamChunk(null, 'stop')),
+        sse('[DONE]'),
+      ]),
+    });
+    const app = track(
+      buildGateway({
+        config: config(),
+        logger: createNullLogger(),
+        provider: provider(createChatCompletion),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization(),
+      payload: {
+        model: 'coding',
+        stream: true,
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_file',
+                file_data: PDF_BASE64,
+                filename: 'spec.pdf',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(createChatCompletion.mock.calls[0]?.[0]).toEqual({
+      model: 'coding',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'file',
+              file: { file_data: PDF_BASE64, filename: 'spec.pdf' },
+            },
+          ],
+        },
+      ],
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+    expect(response.body).toContain('event: response.output_text.delta');
+    expect(response.body).toContain('"text":"PDF received."');
     expect(response.body).toContain('event: response.completed');
   });
 

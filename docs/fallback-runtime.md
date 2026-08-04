@@ -42,7 +42,7 @@ The runtime enforces all limits even when an operation ignores its abort signal.
 
 ## Selection and affinity
 
-Fallback reuses the deterministic capability-aware selector. A failed route is excluded only for the current execution, so a fallback can never bypass required tools, vision, structured output, reasoning, or context size. Session affinity is updated only after an attempt succeeds.
+Fallback reuses the deterministic capability-aware selector. A failed route is excluded only for the current execution, so a fallback can never bypass required tools, vision, inline file input, structured output, reasoning, or context size. Session affinity is updated only after an attempt succeeds.
 
 ## Trace
 
@@ -57,3 +57,5 @@ Every execution returns or throws with an immutable trace containing:
 - successful attempt
 
 The trace is operational metadata. It must not contain provider credentials, raw prompts, or raw response bodies.
+
+Provider-native file IDs are not replay-safe across accounts. Tony Router therefore rejects Responses `input_file.file_id` until a virtual ID can pin the owning provider/account; inline PDF bytes remain eligible for normal capability-safe fallback because the complete input is self-contained.
