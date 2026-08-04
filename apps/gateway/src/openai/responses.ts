@@ -72,6 +72,18 @@ const FUNCTION_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const CALL_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 const IMAGE_DATA_URL_PATTERN =
   /^data:image\/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/]+={0,2})$/i;
+const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+const INPUT_FILE_KEYS = new Set([
+  'type',
+  'file_id',
+  'file_url',
+  'file_data',
+  'filename',
+  'detail',
+  'prompt_cache_breakpoint',
+]);
+const MAX_FILE_DATA_LENGTH = 70 * 1024 * 1024;
+const MAX_FILENAME_LENGTH = 255;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -214,6 +226,118 @@ function imageDetail(value: unknown): 'auto' | 'low' | 'high' {
   return invalid('input_image detail must be auto, low, or high');
 }
 
+function pdfFilename(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    return invalid('input_file filename must be a non-empty string');
+  }
+  if (value !== value.trim()) {
+    return invalid(
+      'input_file filename must not contain surrounding whitespace',
+    );
+  }
+  if (value.length > MAX_FILENAME_LENGTH) {
+    return invalid(
+      `input_file filename must not exceed ${MAX_FILENAME_LENGTH} characters`,
+    );
+  }
+  if (/[\u0000-\u001f\u007f]/.test(value)) {
+    return invalid('input_file filename must not contain control characters');
+  }
+  if (value.includes('/') || value.includes('\\')) {
+    return invalid(
+      'input_file filename must be a basename without path separators',
+    );
+  }
+  if (!value.toLowerCase().endsWith('.pdf')) {
+    return unsupported('this phase supports only PDF input_file content');
+  }
+  return value;
+}
+
+function pdfFileData(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    return invalid('input_file file_data must be a non-empty base64 string');
+  }
+  if (value.length > MAX_FILE_DATA_LENGTH) {
+    return invalid(
+      `input_file file_data must not exceed ${MAX_FILE_DATA_LENGTH} characters`,
+    );
+  }
+  if (value.length % 4 === 1 || !BASE64_PATTERN.test(value)) {
+    return invalid('input_file file_data must contain canonical base64 data');
+  }
+
+  const normalized = value.replace(/=+$/, '');
+  const decoded = Buffer.from(value, 'base64');
+  if (
+    decoded.length === 0 ||
+    decoded.toString('base64').replace(/=+$/, '') !== normalized
+  ) {
+    return invalid('input_file file_data must contain canonical base64 data');
+  }
+
+  const header = decoded.subarray(0, 8).toString('ascii');
+  if (!/^%PDF-(?:1\.[0-9]|2\.0)$/.test(header)) {
+    return invalid('input_file file_data bytes must contain a PDF header');
+  }
+  const tail = decoded
+    .subarray(Math.max(0, decoded.length - 1024))
+    .toString('latin1');
+  if (!tail.includes('%%EOF')) {
+    return invalid('input_file file_data bytes must contain a PDF EOF marker');
+  }
+  return value;
+}
+
+function inputFilePart(part: JsonRecord): JsonRecord {
+  unsupportedKeys(part, INPUT_FILE_KEYS, 'input_file');
+
+  const sources = [part.file_id, part.file_url, part.file_data].filter(
+    (value) => value !== undefined && value !== null,
+  );
+  if (sources.length === 0) {
+    return invalid(
+      'input_file must contain exactly one of file_data, file_id, or file_url',
+    );
+  }
+  if (sources.length > 1) {
+    return invalid(
+      'input_file must not combine file_data, file_id, and file_url sources',
+    );
+  }
+  if (part.file_id !== undefined && part.file_id !== null) {
+    return unsupported(
+      'input_file file_id requires provider-account ownership and is not implemented in this phase',
+    );
+  }
+  if (part.file_url !== undefined && part.file_url !== null) {
+    return unsupported(
+      'input_file file_url cannot be translated losslessly without local fetching and is not implemented in this phase',
+    );
+  }
+  if (part.detail !== undefined && part.detail !== null) {
+    return unsupported(
+      'input_file detail cannot be represented by Chat Completions in this phase',
+    );
+  }
+  if (
+    part.prompt_cache_breakpoint !== undefined &&
+    part.prompt_cache_breakpoint !== null
+  ) {
+    return unsupported(
+      'input_file prompt_cache_breakpoint is not implemented in this phase',
+    );
+  }
+
+  return {
+    type: 'file',
+    file: {
+      file_data: pdfFileData(part.file_data),
+      filename: pdfFilename(part.filename),
+    },
+  };
+}
+
 function inputContent(
   content: unknown,
   role: 'user' | 'assistant' | 'system' | 'developer',
@@ -227,7 +351,7 @@ function inputContent(
   }
 
   const parts: JsonRecord[] = [];
-  let hasImage = false;
+  let hasRichContent = false;
   for (const part of content) {
     if (!isRecord(part)) {
       return invalid('input content items must be JSON objects');
@@ -258,7 +382,7 @@ function inputContent(
       if (part.image_url === undefined) {
         return invalid('input_image must contain image_url');
       }
-      hasImage = true;
+      hasRichContent = true;
       parts.push({
         type: 'image_url',
         image_url: {
@@ -270,15 +394,22 @@ function inputContent(
     }
 
     if (part.type === 'input_file') {
-      return unsupported('input_file is not implemented in this phase');
+      if (role !== 'user') {
+        return unsupported(
+          'this phase supports input_file only in user messages',
+        );
+      }
+      hasRichContent = true;
+      parts.push(inputFilePart(part));
+      continue;
     }
 
     return unsupported(
-      'this phase supports input_text, user input_image, and replayed assistant output_text content',
+      'this phase supports input_text, user input_image/input_file, and replayed assistant output_text content',
     );
   }
 
-  if (hasImage) return parts;
+  if (hasRichContent) return parts;
   return parts.map((part) => String(part.text)).join('');
 }
 

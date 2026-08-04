@@ -31,6 +31,7 @@ models:
       parallelToolCalls: true
       vision: true
       structuredOutput: true
+      fileInput: true
       reasoning: true
       contextTokens: 128000
 routes:
@@ -50,6 +51,10 @@ profiles:
 ```
 
 Both routes reuse one provider adapter and one model catalog entry. They differ only by account credential and account-specific runtime state. Route priority and route ID provide deterministic account selection before affinity or failure state is applied.
+
+## File ownership boundary
+
+Provider-native file IDs belong to the provider account that created them. Routing or fallback to another account would make the ID invalid or could cross an ownership boundary. Tony Router therefore accepts only self-contained inline PDF bytes in the current Responses compatibility slice. `input_file.file_id` stays disabled until the control plane can issue a virtual ID mapped to one provider, one account, and an explicit retention policy.
 
 ## Provider binding v2
 

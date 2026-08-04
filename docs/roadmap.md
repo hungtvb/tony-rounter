@@ -91,12 +91,13 @@ Delivered compatibility slices:
 - Codex-style JSON/SSE compatibility fixtures combining instructions, function tools, image input, and strict structured output;
 - bounded refusal normalization plus ordered `response.refusal.delta` / `done` lifecycle events;
 - bounded reasoning request forwarding, reasoning-capability filtering, explicit provider-supplied reasoning-summary lifecycle events, and reasoning-token usage preservation;
-- explicit rejection of `file_id`, `input_file`, hosted-tool, encrypted/private reasoning content, stored, background, and server-side `previous_response_id` chaining features;
+- capability-safe inline base64 PDF `input_file` translation with ordered text/image/PDF content, bounded PDF validation, and no local fetching, rendering, extraction, OCR, or persistence;
+- explicit rejection of provider-account-owned `file_id`, remote `file_url`, hosted-tool, encrypted/private reasoning content, stored, background, and server-side `previous_response_id` chaining features;
 - gateway contracts for authentication, missing provider, JSON/SSE translation, routed fallback, no post-output replay, disconnect, malformed streams, and protocol mismatch.
 
 Remaining:
 
-- Files API-backed image/file input and broader multimodal capability mapping;
+- virtual Files API IDs with explicit provider/account ownership, remote file URL policy, and broader multimodal capability mapping;
 - server-side `previous_response_id` chaining and response persistence;
 - optional stored/background semantics only after their ownership and persistence boundaries are defined.
 

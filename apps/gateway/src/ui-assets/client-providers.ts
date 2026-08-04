@@ -300,6 +300,7 @@ export const UI_JS_PROVIDERS = String.raw`
         '      parallelToolCalls: true',
         '      vision: false',
         '      structuredOutput: true',
+        '      fileInput: false',
         '      reasoning: false',
         '      contextTokens: 128000',
         '',

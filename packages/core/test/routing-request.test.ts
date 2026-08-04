@@ -15,6 +15,10 @@ describe('deriveChatRequestCapabilities', () => {
               content: [
                 { type: 'text', text: 'Describe this' },
                 { type: 'image_url', image_url: { url: 'data:image/png' } },
+                {
+                  type: 'file',
+                  file: { file_data: 'JVBERi0xLjQ=', filename: 'spec.pdf' },
+                },
               ],
             },
           ],
@@ -29,6 +33,7 @@ describe('deriveChatRequestCapabilities', () => {
       parallelToolCalls: true,
       vision: true,
       structuredOutput: true,
+      fileInput: true,
       reasoning: true,
       minimumContextTokens: 6_000,
     });
@@ -116,6 +121,24 @@ describe('deriveChatRequestCapabilities', () => {
       vision: true,
       structuredOutput: true,
     });
+  });
+
+  it('recognizes Responses input_file compatibility parts', () => {
+    expect(
+      deriveChatRequestCapabilities({
+        messages: [
+          {
+            content: [
+              {
+                type: 'input_file',
+                file_data: 'JVBERi0xLjQ=',
+                filename: 'spec.pdf',
+              },
+            ],
+          },
+        ],
+      }),
+    ).toMatchObject({ fileInput: true });
   });
 
   it('does not require reasoning for effort none without a summary', () => {

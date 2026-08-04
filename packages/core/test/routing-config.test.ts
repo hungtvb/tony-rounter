@@ -17,6 +17,7 @@ models:
       parallelToolCalls: true
       vision: true
       structuredOutput: true
+      fileInput: true
       reasoning: true
       contextTokens: 128000
 routes:
@@ -49,7 +50,7 @@ describe('parseRoutingConfig', () => {
           id: 'capable',
           providerId: 'primary',
           upstreamModel: 'capable-model',
-          capabilities: { reasoning: true },
+          capabilities: { fileInput: true, reasoning: true },
         },
       },
       routes: {
@@ -174,6 +175,12 @@ describe('parseRoutingConfig', () => {
         VALID_CONFIG.replace('contextTokens: 128000', 'contextTokens: 0'),
       ),
     ).toThrow(/between 1 and 10000000/);
+
+    expect(() =>
+      parseRoutingConfig(
+        VALID_CONFIG.replace('fileInput: true', 'fileInput: enabled'),
+      ),
+    ).toThrow(/fileInput/);
   });
 
   it('rejects empty and oversized sources', () => {

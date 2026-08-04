@@ -36,6 +36,7 @@ function snapshotRequirements(
     parallelToolCalls: required.parallelToolCalls,
     vision: required.vision,
     structuredOutput: required.structuredOutput,
+    ...(required.fileInput === true ? { fileInput: true } : {}),
     ...(required.reasoning === true ? { reasoning: true } : {}),
     ...(required.minimumContextTokens !== undefined
       ? { minimumContextTokens: required.minimumContextTokens }
@@ -73,6 +74,13 @@ function capabilityRejections(
   if (required.structuredOutput && !capabilities.structuredOutput) {
     rejections.push({
       code: 'missing_structured_output',
+      required: true,
+      actual: false,
+    });
+  }
+  if (required.fileInput && !capabilities.fileInput) {
+    rejections.push({
+      code: 'missing_file_input',
       required: true,
       actual: false,
     });

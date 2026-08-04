@@ -20,6 +20,8 @@ import type { GatewayRouterConfig } from '../src/routing/config.js';
 import { authorization, GATEWAY_TOKEN } from './helpers/openai-harness.js';
 
 const apps: FastifyInstance[] = [];
+const PDF_BASE64 =
+  'JVBERi0xLjQKMSAwIG9iago8PD4+CmVuZG9iagp0cmFpbGVyCjw8Pj4KJSVFT0YK';
 
 function gatewayConfig(): GatewayConfig {
   return {
@@ -105,6 +107,30 @@ function toolHistoryRouterConfig(): GatewayRouterConfig {
     ROUTING_YAML.replace(
       'tools: true\n      parallelToolCalls: true',
       'tools: false\n      parallelToolCalls: false',
+    ),
+  );
+  const base = routerConfig();
+  return { ...base, registry };
+}
+
+function fileRouterConfig(): GatewayRouterConfig {
+  const registry = parseRoutingConfig(
+    ROUTING_YAML.replace(
+      `  backup-model:
+    provider: backup
+    upstreamModel: backup-upstream
+    capabilities:
+      tools: true
+      parallelToolCalls: true
+      vision: false`,
+      `  backup-model:
+    provider: backup
+    upstreamModel: backup-upstream
+    capabilities:
+      tools: true
+      parallelToolCalls: true
+      vision: false
+      fileInput: true`,
     ),
   );
   const base = routerConfig();
@@ -410,6 +436,105 @@ describe('routed Responses text streaming', () => {
     expect(response.headers['x-tony-router-attempts']).toBe('1');
     expect(primary.requests).toHaveLength(0);
     expect(backup.requests).toHaveLength(1);
+  });
+
+  it('routes inline PDF input only to a file-capable model', async () => {
+    const primary = new FakeProvider(async () =>
+      successfulStream('chatcmpl_primary_incompatible', 'must not run'),
+    );
+    const backup = new FakeProvider(async () =>
+      successfulStream('chatcmpl_backup_pdf', 'PDF received.'),
+    );
+    const app = track(
+      buildGateway({
+        config: gatewayConfig(),
+        router: fileRouterConfig(),
+        routedProviders: { primary, backup },
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await routedResponse(app, {
+      model: 'tony-auto',
+      stream: true,
+      input: [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'Summarize this.' },
+            {
+              type: 'input_file',
+              file_data: PDF_BASE64,
+              filename: 'spec.pdf',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['x-tony-router-route']).toBe('backup-route');
+    expect(response.headers['x-tony-router-provider']).toBe('backup');
+    expect(response.headers['x-tony-router-account']).toBe('backup');
+    expect(response.headers['x-tony-router-attempts']).toBe('1');
+    expect(primary.requests).toHaveLength(0);
+    expect(backup.requests).toHaveLength(1);
+    expect(backup.requests[0]).toMatchObject({
+      model: 'backup-upstream',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Summarize this.' },
+            {
+              type: 'file',
+              file: { file_data: PDF_BASE64, filename: 'spec.pdf' },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('rejects inline PDF input before provider invocation when no route supports files', async () => {
+    const primary = new FakeProvider(async () =>
+      successfulStream('chatcmpl_primary', 'must not run'),
+    );
+    const backup = new FakeProvider(async () =>
+      successfulStream('chatcmpl_backup', 'must not run'),
+    );
+    const app = track(
+      buildGateway({
+        config: gatewayConfig(),
+        router: routerConfig(),
+        routedProviders: { primary, backup },
+        logger: createNullLogger(),
+      }),
+    );
+
+    const response = await routedResponse(app, {
+      model: 'tony-auto',
+      stream: true,
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_file',
+              file_data: PDF_BASE64,
+              filename: 'spec.pdf',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: { code: 'no_compatible_route' },
+    });
+    expect(primary.requests).toHaveLength(0);
+    expect(backup.requests).toHaveLength(0);
   });
 
   it('routes image input only to a vision-capable model', async () => {

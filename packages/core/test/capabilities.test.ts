@@ -11,6 +11,7 @@ const capableModel: ModelCapabilities = {
   parallelToolCalls: true,
   vision: true,
   structuredOutput: true,
+  fileInput: true,
   reasoning: true,
   contextTokens: 128_000,
 };
@@ -22,6 +23,7 @@ describe('deriveRequiredCapabilities', () => {
       allowsParallelToolCalls: true,
       hasImageInput: true,
       hasStructuredOutput: true,
+      hasFileInput: true,
       hasReasoning: true,
       estimatedInputTokens: 10_000,
       reservedOutputTokens: 4_000,
@@ -32,6 +34,7 @@ describe('deriveRequiredCapabilities', () => {
       parallelToolCalls: true,
       vision: true,
       structuredOutput: true,
+      fileInput: true,
       reasoning: true,
       minimumContextTokens: 14_000,
     });
@@ -74,6 +77,7 @@ describe('supportsCapabilities', () => {
         parallelToolCalls: true,
         vision: true,
         structuredOutput: true,
+        fileInput: true,
         reasoning: true,
         minimumContextTokens: 64_000,
       }),
@@ -89,6 +93,21 @@ describe('supportsCapabilities', () => {
           parallelToolCalls: false,
           vision: false,
           structuredOutput: true,
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects a model without file input support when PDF input is required', () => {
+    expect(
+      supportsCapabilities(
+        { ...capableModel, fileInput: false },
+        {
+          tools: false,
+          parallelToolCalls: false,
+          vision: false,
+          structuredOutput: false,
+          fileInput: true,
         },
       ),
     ).toBe(false);
