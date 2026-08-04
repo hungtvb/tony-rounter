@@ -380,6 +380,9 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
           ...(responsesRequest.tool_choice !== undefined
             ? { toolChoice: responsesRequest.tool_choice }
             : {}),
+          ...(responsesRequest.text?.format !== undefined
+            ? { textFormat: responsesRequest.text.format }
+            : {}),
         });
         const cleanup = (): void => abortContext.cleanup();
         body.once('end', cleanup);
@@ -404,7 +407,11 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
         );
       }
 
-      return chatCompletionToResponse(result.body, responsesRequest.model);
+      return chatCompletionToResponse(
+        result.body,
+        responsesRequest.model,
+        responsesRequest.text?.format,
+      );
     } finally {
       if (!streaming) abortContext.cleanup();
     }

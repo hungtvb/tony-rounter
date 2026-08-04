@@ -14,6 +14,29 @@ export interface ResponsesFunctionTool extends Readonly<
 export type ResponsesToolChoice =
   'none' | 'auto' | 'required' | Readonly<{ type: 'function'; name: string }>;
 
+export interface ResponsesTextFormatText extends Readonly<
+  Record<string, unknown>
+> {
+  readonly type: 'text';
+}
+
+export interface ResponsesTextFormatJsonSchema extends Readonly<
+  Record<string, unknown>
+> {
+  readonly type: 'json_schema';
+  readonly name: string;
+  readonly schema: Readonly<Record<string, unknown>>;
+  readonly description?: string;
+  readonly strict?: boolean;
+}
+
+export type ResponsesTextFormat =
+  ResponsesTextFormatText | ResponsesTextFormatJsonSchema;
+
+export interface ResponsesTextConfig extends Readonly<Record<string, unknown>> {
+  readonly format?: ResponsesTextFormat;
+}
+
 export interface ResponsesRequest extends Readonly<Record<string, unknown>> {
   readonly model: string;
   readonly input: string | readonly unknown[];
@@ -25,6 +48,7 @@ export interface ResponsesRequest extends Readonly<Record<string, unknown>> {
   readonly parallel_tool_calls?: boolean;
   readonly tools?: readonly ResponsesFunctionTool[];
   readonly tool_choice?: ResponsesToolChoice;
+  readonly text?: ResponsesTextConfig;
   readonly store?: false;
   readonly background?: false;
 }
@@ -527,6 +551,105 @@ function validateToolChoiceAgainstTools(value: JsonRecord): void {
   }
 }
 
+function unsupportedKeys(
+  value: JsonRecord,
+  allowed: ReadonlySet<string>,
+  label: string,
+): void {
+  const unsupportedKey = Object.keys(value).find((key) => !allowed.has(key));
+  if (unsupportedKey !== undefined) {
+    unsupported(
+      `${label} field ${unsupportedKey} is not implemented in this phase`,
+    );
+  }
+}
+
+const TEXT_CONFIG_KEYS = new Set(['format']);
+const TEXT_FORMAT_TEXT_KEYS = new Set(['type']);
+const TEXT_FORMAT_JSON_SCHEMA_KEYS = new Set([
+  'type',
+  'name',
+  'description',
+  'schema',
+  'strict',
+]);
+
+function textFormat(value: unknown): ResponsesTextFormat {
+  if (!isRecord(value)) {
+    return invalid('text.format must be a JSON object');
+  }
+  if (typeof value.type !== 'string') {
+    return invalid('text.format type must be a string');
+  }
+
+  if (value.type === 'text') {
+    unsupportedKeys(value, TEXT_FORMAT_TEXT_KEYS, 'text.format');
+    return { type: 'text' };
+  }
+  if (value.type === 'json_object') {
+    return unsupported(
+      'legacy json_object text format is not implemented; use json_schema',
+    );
+  }
+  if (value.type !== 'json_schema') {
+    return unsupported(`text.format type ${value.type} is not implemented`);
+  }
+
+  unsupportedKeys(value, TEXT_FORMAT_JSON_SCHEMA_KEYS, 'text.format');
+  const name = validateFunctionName(value.name, 'text.format name');
+  if (!isRecord(value.schema)) {
+    return invalid('text.format json_schema schema must be a JSON object');
+  }
+  if (
+    value.description !== undefined &&
+    typeof value.description !== 'string'
+  ) {
+    return invalid(
+      'text.format json_schema description must be a string when provided',
+    );
+  }
+  if (value.strict !== undefined && typeof value.strict !== 'boolean') {
+    return invalid(
+      'text.format json_schema strict must be a boolean when provided',
+    );
+  }
+
+  return {
+    type: 'json_schema',
+    name,
+    schema: value.schema,
+    ...(value.description !== undefined
+      ? { description: value.description }
+      : {}),
+    ...(value.strict !== undefined ? { strict: value.strict } : {}),
+  };
+}
+
+function textConfig(value: unknown): ResponsesTextConfig {
+  if (!isRecord(value)) return invalid('text must be a JSON object');
+  unsupportedKeys(value, TEXT_CONFIG_KEYS, 'text');
+  if (value.format === undefined) return {};
+  return { format: textFormat(value.format) };
+}
+
+function chatResponseFormat(
+  value: ResponsesTextConfig | undefined,
+): JsonRecord | undefined {
+  const format = value?.format;
+  if (!format || format.type === 'text') return undefined;
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: format.name,
+      schema: format.schema,
+      ...(format.description !== undefined
+        ? { description: format.description }
+        : {}),
+      ...(format.strict !== undefined ? { strict: format.strict } : {}),
+    },
+  };
+}
+
 function validateDisabledFeature(
   value: unknown,
   name: 'store' | 'background',
@@ -570,8 +693,13 @@ export function parseResponsesRequest(value: unknown): ResponsesRequest {
   if (value.tools !== undefined) translateTools(value.tools);
   if (value.tool_choice !== undefined) translateToolChoice(value.tool_choice);
   validateToolChoiceAgainstTools(value);
+  const normalizedText =
+    value.text === undefined ? undefined : textConfig(value.text);
 
-  return value as ResponsesRequest;
+  return {
+    ...value,
+    ...(normalizedText !== undefined ? { text: normalizedText } : {}),
+  } as ResponsesRequest;
 }
 
 export function responsesToChatCompletion(
@@ -605,6 +733,10 @@ export function responsesToChatCompletion(
   }
   if (request.parallel_tool_calls !== undefined) {
     translated.parallel_tool_calls = request.parallel_tool_calls;
+  }
+  const responseFormat = chatResponseFormat(request.text);
+  if (responseFormat !== undefined) {
+    translated.response_format = responseFormat;
   }
 
   return translated as ChatCompletionRequest;
@@ -649,6 +781,7 @@ function usage(value: unknown): JsonRecord | undefined {
 export function chatCompletionToResponse(
   value: Readonly<Record<string, unknown>>,
   requestedModel: string,
+  requestedTextFormat: ResponsesTextFormat = { type: 'text' },
 ): Readonly<Record<string, unknown>> {
   if (typeof value.id !== 'string' || value.id.length === 0) {
     return upstreamInvalid('Upstream returned an invalid response ID');
@@ -741,6 +874,7 @@ export function chatCompletionToResponse(
     model: requestedModel,
     output,
     parallel_tool_calls: true,
+    text: { format: requestedTextFormat },
     ...(normalizedUsage ? { usage: normalizedUsage } : {}),
   };
 }
