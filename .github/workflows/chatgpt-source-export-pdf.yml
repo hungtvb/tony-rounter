@@ -1,0 +1,49 @@
+name: ChatGPT Source Export PDF
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/chatgpt-source-export-pdf.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EXPECTED_BASE: e9a45fbb518c83b22adf90b13dda1b883aeaaa12
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Package exact main revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$EXPECTED_BASE"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          test -z "$(git status --porcelain)"
+          mkdir -p "$RUNNER_TEMP/export"
+          tar --exclude='./node_modules' --exclude='./.pnpm-store' -czf "$RUNNER_TEMP/export/tony-rounter-main-with-git-${EXPECTED_BASE:0:8}.tar.gz" .
+          sha256sum "$RUNNER_TEMP/export/tony-rounter-main-with-git-${EXPECTED_BASE:0:8}.tar.gz" > "$RUNNER_TEMP/export/SHA256SUMS"
+          printf '{"repository":"%s","commit":"%s","tree":"%s","tracked_files":%s}\n' \
+            "$GITHUB_REPOSITORY" \
+            "$(git rev-parse HEAD)" \
+            "$(git rev-parse HEAD^{tree})" \
+            "$(git ls-files | wc -l)" > "$RUNNER_TEMP/export/job-report.json"
+
+      - name: Upload exact source
+        uses: actions/upload-artifact@v4
+        with:
+          name: tony-rounter-main-with-git-e9a45fbb
+          path: ${{ runner.temp }}/export
+          if-no-files-found: error
+          retention-days: 1
