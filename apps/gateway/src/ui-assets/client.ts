@@ -4,6 +4,7 @@ import { UI_JS_PART_3 } from './client-part-3.js';
 import { UI_JS_PART_4 } from './client-part-4.js';
 import { UI_JS_PART_5 } from './client-part-5.js';
 import { UI_JS_PROVIDERS } from './client-providers.js';
+import { UI_JS_CONTRACT } from './client-contract.js';
 import { UI_JS_PART_6 } from './client-part-6.js';
 
 export const UI_JS = [
@@ -13,5 +14,6 @@ export const UI_JS = [
   UI_JS_PART_4,
   UI_JS_PART_5,
   UI_JS_PROVIDERS,
+  UI_JS_CONTRACT,
   UI_JS_PART_6,
 ].join('');

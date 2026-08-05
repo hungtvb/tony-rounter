@@ -5,6 +5,8 @@ export const UI_JS_PART_3 = String.raw`      ? telemetry.inFlightRequests + ' cu
       : '—';
     renderProvider();
     renderProviders();
+    renderRoutingPlan();
+    renderAttention();
     renderConnection();
     updateUptime();
   }

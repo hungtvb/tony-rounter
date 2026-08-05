@@ -18,18 +18,18 @@ export const UI_JS_PART_6 = String.raw`  elements.reloadModelsButton.addEventLis
   elements.temperatureInput.addEventListener('input', () => {
     elements.temperatureValue.textContent = Number(elements.temperatureInput.value).toFixed(1);
   });
-  elements.sendButton.addEventListener('click', runChat);
+  elements.sendButton.addEventListener('click', runPlayground);
   elements.copyButton.addEventListener('click', copyResponse);
   elements.healthButton.addEventListener('click', () => window.open('/health', '_blank', 'noopener,noreferrer'));
   elements.tokenInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') connect();
   });
   elements.promptInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) runChat();
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) runPlayground();
   });
 
   const hashView = location.hash.slice(1);
-  setView(viewMetadata[hashView] ? hashView : 'dashboard');
+  setView(viewMetadata[hashView] ? hashView : 'overview');
   renderModels();
   renderModelSelect();
   renderMetrics();

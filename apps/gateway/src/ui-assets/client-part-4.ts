@@ -138,7 +138,7 @@ export const UI_JS_PART_4 = String.raw`      elements.recentRequestList.append(e
       elements.tokenInput.value = '';
       renderConnection();
       toast('Gateway connected');
-      setView('dashboard');
+      setView('overview');
     } catch (error) {
       state.token = '';
       state.dashboard = null;

@@ -32,6 +32,7 @@ export const UI_JS_PART_2 = String.raw`    const minutes = Math.floor((seconds %
       elements.gatewayMetric.textContent = 'Offline';
       elements.gatewayDetail.textContent = 'Health endpoint is unavailable';
       elements.sidebarStatusDot.className = 'status-dot is-error';
+      elements.gatewayStatusDot.className = 'status-dot is-error';
       setPill(elements.globalStatus, 'is-error', 'Offline');
       return;
     }
@@ -41,6 +42,7 @@ export const UI_JS_PART_2 = String.raw`    const minutes = Math.floor((seconds %
     elements.sidebarVersion.textContent = state.health.version || 'unknown';
     elements.footerVersion.textContent = state.health.version || 'unknown';
     elements.sidebarStatusDot.className = 'status-dot is-online';
+    elements.gatewayStatusDot.className = 'status-dot is-online';
     setPill(elements.globalStatus, 'is-online', state.token ? 'Connected' : 'Online');
   }
 

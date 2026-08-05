@@ -151,6 +151,15 @@ Use **JetBrains Mono** for:
 
 Production must load these fonts deterministically. Prefer bundled/self-hosted assets for the local control plane; an approved external stylesheet is acceptable only when the runtime policy permits it. Verification screenshots must wait for `document.fonts.ready` and confirm that Inter and JetBrains Mono are actually loaded rather than silently falling back.
 
+### Production font loading decision
+
+The local control plane keeps the restrictive `style-src 'self'` Content Security Policy and does not contact Google Fonts or another remote font host. The production stylesheet uses the approved deterministic stacks exactly:
+
+- `Inter`, then the documented local/system sans-serif fallback chain;
+- `JetBrains Mono`, then the documented local/system monospace fallback chain.
+
+The client waits for `document.fonts.ready`, records the resolved font state on the root element, and reports whether both named fonts loaded or the documented fallback is active. This preserves CSP and offline operation without silently claiming that a remote font loaded.
+
 ## Color system
 
 Tony Lime is the shared brand accent, not a universal status color.
