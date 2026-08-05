@@ -92,14 +92,14 @@ Delivered compatibility slices:
 - bounded refusal normalization plus ordered `response.refusal.delta` / `done` lifecycle events;
 - bounded reasoning request forwarding, reasoning-capability filtering, explicit provider-supplied reasoning-summary lifecycle events, and reasoning-token usage preservation;
 - capability-safe inline base64 PDF `input_file` translation with ordered text/image/PDF content, bounded PDF validation, and no local fetching, rendering, extraction, OCR, or persistence;
-- authenticated bounded Files API create/delete compatibility for `purpose=user_data`, with separate server-only key material and opaque encrypted virtual IDs;
-- explicit provider/account ownership pinning for Responses `input_file.file_id`, including same-account-only fallback, mixed-owner rejection, and exact-owner deletion;
-- explicit rejection of remote `file_url`, Files list/retrieve/content endpoints, hosted-tool, encrypted/private reasoning content, stored, background, and server-side `previous_response_id` chaining features;
+- authenticated bounded Files API create/list/retrieve/content/delete compatibility for `purpose=user_data`, with separate server-only key material and opaque encrypted virtual IDs;
+- explicit provider/account ownership pinning for Responses `input_file.file_id` and all file object operations, including account-scoped listing, virtual pagination cursors, same-account-only fallback, mixed-owner rejection, exact-owner retrieval/content, and exact-owner deletion;
+- explicit rejection of remote `file_url`, hosted-tool, encrypted/private reasoning content, stored, background, and server-side `previous_response_id` chaining features;
 - gateway contracts for authentication, missing provider, JSON/SSE translation, routed fallback, no post-output replay, disconnect, malformed streams, and protocol mismatch.
 
 Remaining:
 
-- remote file URL policy, Files list/retrieve/content compatibility, and broader multimodal capability mapping;
+- remote file URL policy and broader multimodal capability mapping;
 - server-side `previous_response_id` chaining and response persistence;
 - optional stored/background semantics only after their ownership and persistence boundaries are defined.
 

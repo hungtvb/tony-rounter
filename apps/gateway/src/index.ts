@@ -24,14 +24,21 @@ export { OpenAICompatibleClient } from './openai/client.js';
 export {
   filePurpose,
   normalizeDeletedFile,
+  normalizeFileList,
   normalizeFileObject,
+  normalizeRetrievedFile,
+  upstreamFileContentType,
   uploadContentType,
   uploadedFilename,
 } from './openai/files.js';
 export type {
   CanonicalDeletedFile,
+  CanonicalFileList,
   CanonicalFileObject,
+  FileListOrder,
   FilePurpose,
+  ProviderFileContent,
+  ProviderFileListQuery,
   ProviderFileUpload,
 } from './openai/files.js';
 export type {

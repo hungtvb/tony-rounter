@@ -5,9 +5,15 @@ import { GatewayHttpError } from '../errors.js';
 import type { JsonLogger } from '../logger.js';
 import {
   normalizeDeletedFile,
+  normalizeFileList,
   normalizeFileObject,
+  normalizeRetrievedFile,
+  upstreamFileContentType,
   type CanonicalDeletedFile,
+  type CanonicalFileList,
   type CanonicalFileObject,
+  type ProviderFileContent,
+  type ProviderFileListQuery,
   type ProviderFileUpload,
 } from './files.js';
 import {
@@ -26,6 +32,7 @@ import {
 
 const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
+const MAX_FILE_CONTENT_BYTES = 16 * 1024 * 1024;
 
 export interface ProviderRequestContext {
   readonly requestId: string;
@@ -49,6 +56,18 @@ export interface OpenAICompatibleProvider {
     upload: ProviderFileUpload,
     context: ProviderRequestContext,
   ): Promise<CanonicalFileObject>;
+  listFiles?(
+    query: ProviderFileListQuery,
+    context: ProviderRequestContext,
+  ): Promise<CanonicalFileList>;
+  retrieveFile?(
+    fileId: string,
+    context: ProviderRequestContext,
+  ): Promise<CanonicalFileObject>;
+  retrieveFileContent?(
+    fileId: string,
+    context: ProviderRequestContext,
+  ): Promise<ProviderFileContent>;
   deleteFile?(
     fileId: string,
     context: ProviderRequestContext,
@@ -131,7 +150,12 @@ function createAbortScope(
 
 function endpoint(
   baseUrl: string,
-  resource: 'models' | 'files' | `files/${string}` | 'chat/completions',
+  resource:
+    | 'models'
+    | 'files'
+    | `files/${string}`
+    | `files/${string}/content`
+    | 'chat/completions',
 ): string {
   const url = new URL(`${baseUrl}/`);
   const basePath = url.pathname.replace(/\/+$/, '');
@@ -234,6 +258,54 @@ function parseJson(text: string, message: string): unknown {
     return JSON.parse(text);
   } catch {
     throw new GatewayHttpError(502, 'upstream_invalid_response', message);
+  }
+}
+
+async function readBoundedBytes(
+  response: Response,
+  maximumBytes: number,
+  scope: AbortScope,
+): Promise<Uint8Array> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+    throw new GatewayHttpError(
+      502,
+      'upstream_response_too_large',
+      'Upstream file content exceeds the configured safety limit',
+    );
+  }
+  if (!response.body) return new Uint8Array();
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      scope.resetTimeout();
+      const value = byteChunk(chunk.value);
+      bytes += value.byteLength;
+      if (bytes > maximumBytes) {
+        throw new GatewayHttpError(
+          502,
+          'upstream_response_too_large',
+          'Upstream file content exceeds the configured safety limit',
+        );
+      }
+      chunks.push(value);
+    }
+    const output = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      output.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return output;
+  } catch (error) {
+    throw mappedTransportError(error, scope);
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -493,6 +565,157 @@ export class OpenAICompatibleClient implements OpenAICompatibleProvider {
         durationMs: Date.now() - startedAt,
       });
       return models;
+    } catch (error) {
+      throw mappedTransportError(error, scope);
+    } finally {
+      scope.cleanup();
+    }
+  }
+
+  async listFiles(
+    query: ProviderFileListQuery,
+    context: ProviderRequestContext,
+  ): Promise<CanonicalFileList> {
+    const scope = createAbortScope(context.signal, this.config.timeoutMs);
+    const startedAt = Date.now();
+    this.logger.info('upstream_request_started', {
+      requestId: context.requestId,
+      operation: 'list_files',
+    });
+
+    try {
+      const url = new URL(endpoint(this.config.baseUrl, 'files'));
+      url.searchParams.set('limit', String(query.limit));
+      url.searchParams.set('order', query.order);
+      url.searchParams.set('purpose', query.purpose);
+      if (query.after) url.searchParams.set('after', query.after);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: this.headers(),
+        redirect: 'error',
+        signal: scope.signal,
+      });
+      if (!response.ok) {
+        throw await upstreamFailure(response, scope, this.config.apiKey);
+      }
+      const text = await readBoundedText(
+        response,
+        MAX_JSON_RESPONSE_BYTES,
+        scope,
+      );
+      const files = normalizeFileList(
+        parseJson(text, 'Upstream returned malformed file-list JSON'),
+      );
+      if (files.data.length > query.limit) {
+        throw new GatewayHttpError(
+          502,
+          'upstream_invalid_response',
+          'Upstream returned more files than the requested limit',
+        );
+      }
+      this.logger.info('upstream_request_completed', {
+        requestId: context.requestId,
+        operation: 'list_files',
+        statusCode: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return files;
+    } catch (error) {
+      throw mappedTransportError(error, scope);
+    } finally {
+      scope.cleanup();
+    }
+  }
+
+  async retrieveFile(
+    fileId: string,
+    context: ProviderRequestContext,
+  ): Promise<CanonicalFileObject> {
+    const scope = createAbortScope(context.signal, this.config.timeoutMs);
+    const startedAt = Date.now();
+    this.logger.info('upstream_request_started', {
+      requestId: context.requestId,
+      operation: 'retrieve_file',
+    });
+
+    try {
+      const response = await fetch(
+        endpoint(this.config.baseUrl, `files/${encodeURIComponent(fileId)}`),
+        {
+          method: 'GET',
+          headers: this.headers(),
+          redirect: 'error',
+          signal: scope.signal,
+        },
+      );
+      if (!response.ok) {
+        throw await upstreamFailure(response, scope, this.config.apiKey);
+      }
+      const text = await readBoundedText(
+        response,
+        MAX_JSON_RESPONSE_BYTES,
+        scope,
+      );
+      const file = normalizeRetrievedFile(
+        parseJson(text, 'Upstream returned malformed file metadata JSON'),
+        fileId,
+      );
+      this.logger.info('upstream_request_completed', {
+        requestId: context.requestId,
+        operation: 'retrieve_file',
+        statusCode: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return file;
+    } catch (error) {
+      throw mappedTransportError(error, scope);
+    } finally {
+      scope.cleanup();
+    }
+  }
+
+  async retrieveFileContent(
+    fileId: string,
+    context: ProviderRequestContext,
+  ): Promise<ProviderFileContent> {
+    const scope = createAbortScope(context.signal, this.config.timeoutMs);
+    const startedAt = Date.now();
+    this.logger.info('upstream_request_started', {
+      requestId: context.requestId,
+      operation: 'retrieve_file_content',
+    });
+
+    try {
+      const response = await fetch(
+        endpoint(
+          this.config.baseUrl,
+          `files/${encodeURIComponent(fileId)}/content`,
+        ),
+        {
+          method: 'GET',
+          headers: { ...this.headers(), accept: '*/*' },
+          redirect: 'error',
+          signal: scope.signal,
+        },
+      );
+      if (!response.ok) {
+        throw await upstreamFailure(response, scope, this.config.apiKey);
+      }
+      const contentType = upstreamFileContentType(
+        response.headers.get('content-type'),
+      );
+      const bytes = await readBoundedBytes(
+        response,
+        MAX_FILE_CONTENT_BYTES,
+        scope,
+      );
+      this.logger.info('upstream_request_completed', {
+        requestId: context.requestId,
+        operation: 'retrieve_file_content',
+        statusCode: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return Object.freeze({ bytes, contentType });
     } catch (error) {
       throw mappedTransportError(error, scope);
     } finally {
