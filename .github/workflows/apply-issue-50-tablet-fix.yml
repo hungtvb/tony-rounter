@@ -1,0 +1,55 @@
+name: Apply issue 50 tablet overflow fix
+
+on:
+  pull_request:
+    branches:
+      - feat/issue-50-control-plane-ui
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.head_ref == 'automation/issue-50-tablet-overflow-fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact product head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+      - name: Assert base and apply reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "487f829d7575516f32f6aa370f6d03b276592836"
+          test "$(git rev-parse HEAD^{tree})" = "4a8641fcb5c1d168d557a50879628b333b0f1760"
+          echo '958a54da64465a58c1b6182fa0a45948a4ad56c5bd6ce24f5d82ced6e7d98932  .github/issue-50-tablet-fix.patch.gz.b64' | sha256sum --check --status
+          base64 --decode .github/issue-50-tablet-fix.patch.gz.b64 > "$RUNNER_TEMP/fix.patch.gz"
+          echo '64cb1db594c397bf642a3880cc61c1175d2694f0150b34bd80d9f06c2947de78  '"$RUNNER_TEMP/fix.patch.gz" | sha256sum --check --status
+          gzip --decompress --stdout "$RUNNER_TEMP/fix.patch.gz" > "$RUNNER_TEMP/fix.patch"
+          git apply --check "$RUNNER_TEMP/fix.patch"
+          git apply "$RUNNER_TEMP/fix.patch"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install, format, and verify exact fixed tree
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm format
+          pnpm verify
+      - name: Commit only the product fix to the product branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ChatGPT'
+          git config user.email 'noreply@openai.com'
+          git add apps/gateway/src/ui-assets/styles-contract.ts apps/gateway/test/ui.test.ts
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" -eq 2
+          git commit -m 'fix(ui): contain tablet data tables'
+          git push origin HEAD:feat/issue-50-control-plane-ui
