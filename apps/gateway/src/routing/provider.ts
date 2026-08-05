@@ -20,7 +20,10 @@ import {
 } from '../openai/client.js';
 import type {
   CanonicalDeletedFile,
+  CanonicalFileList,
   CanonicalFileObject,
+  ProviderFileContent,
+  ProviderFileListQuery,
   ProviderFileUpload,
 } from '../openai/files.js';
 import type {
@@ -422,6 +425,59 @@ export class RoutedOpenAIProvider {
     }
   }
 
+  async listFiles(
+    accountId: string,
+    query: ProviderFileListQuery,
+    context: ProviderRequestContext,
+    expectedProviderId?: string,
+  ): Promise<RoutedFileResult<CanonicalFileList>> {
+    const target = this.#fileAccount(
+      accountId,
+      'listFiles',
+      expectedProviderId,
+    );
+    const result = await target.provider.listFiles!(query, context);
+    return Object.freeze({
+      result,
+      accountId,
+      providerId: target.providerId,
+    });
+  }
+
+  async retrieveFile(
+    accountId: string,
+    providerId: string,
+    fileId: string,
+    context: ProviderRequestContext,
+  ): Promise<RoutedFileResult<CanonicalFileObject>> {
+    const target = this.#fileAccount(accountId, 'retrieveFile', providerId);
+    const result = await target.provider.retrieveFile!(fileId, context);
+    return Object.freeze({
+      result,
+      accountId,
+      providerId: target.providerId,
+    });
+  }
+
+  async retrieveFileContent(
+    accountId: string,
+    providerId: string,
+    fileId: string,
+    context: ProviderRequestContext,
+  ): Promise<RoutedFileResult<ProviderFileContent>> {
+    const target = this.#fileAccount(
+      accountId,
+      'retrieveFileContent',
+      providerId,
+    );
+    const result = await target.provider.retrieveFileContent!(fileId, context);
+    return Object.freeze({
+      result,
+      accountId,
+      providerId: target.providerId,
+    });
+  }
+
   async createFile(
     accountId: string,
     upload: ProviderFileUpload,
@@ -453,7 +509,12 @@ export class RoutedOpenAIProvider {
 
   #fileAccount(
     accountId: string,
-    operation: 'createFile' | 'deleteFile',
+    operation:
+      | 'createFile'
+      | 'listFiles'
+      | 'retrieveFile'
+      | 'retrieveFileContent'
+      | 'deleteFile',
     expectedProviderId?: string,
   ): Readonly<{ providerId: string; provider: OpenAICompatibleProvider }> {
     if (!ACCOUNT_ID_PATTERN.test(accountId)) {

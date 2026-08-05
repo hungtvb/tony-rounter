@@ -22,7 +22,10 @@ import {
   filePurpose,
   uploadContentType,
   uploadedFilename,
+  type CanonicalFileList,
   type CanonicalFileObject,
+  type FileListOrder,
+  type ProviderFileListQuery,
   type ProviderFileUpload,
 } from './openai/files.js';
 import { parseChatCompletionRequest } from './openai/protocol.js';
@@ -181,6 +184,122 @@ function publicFileObject(
   return Object.freeze({ ...file, id: publicId });
 }
 
+function virtualFileId(
+  fileIds: VirtualFileIdCodec,
+  owner: VirtualFileOwner,
+  file: CanonicalFileObject,
+): string {
+  return fileIds.encode({
+    owner,
+    upstreamFileId: file.id,
+    ...(file.expires_at !== undefined ? { expiresAt: file.expires_at } : {}),
+  });
+}
+
+function publicFileList(
+  fileIds: VirtualFileIdCodec,
+  owner: VirtualFileOwner,
+  list: CanonicalFileList,
+): CanonicalFileList {
+  const data = Object.freeze(
+    list.data.map((file) =>
+      publicFileObject(file, virtualFileId(fileIds, owner, file)),
+    ),
+  );
+  return Object.freeze({
+    object: 'list' as const,
+    data,
+    first_id: data[0]?.id ?? null,
+    last_id: data[data.length - 1]?.id ?? null,
+    has_more: list.has_more,
+  });
+}
+
+function fileListSearchParams(request: FastifyRequest): URLSearchParams {
+  try {
+    return new URL(request.raw.url ?? request.url, 'http://tony-router.local')
+      .searchParams;
+  } catch {
+    throw new GatewayHttpError(
+      400,
+      'invalid_file_list_query',
+      'File list query parameters are invalid',
+    );
+  }
+}
+
+function singleFileListQueryValue(
+  searchParams: URLSearchParams,
+  name: string,
+): string | undefined {
+  const values = searchParams.getAll(name);
+  if (values.length === 0) return undefined;
+  if (values.length !== 1) {
+    throw new GatewayHttpError(
+      400,
+      'invalid_file_list_query',
+      `${name} must be supplied at most once`,
+    );
+  }
+  return values[0];
+}
+
+function parseFileListQuery(request: FastifyRequest): Readonly<{
+  publicAfter?: string;
+  query: ProviderFileListQuery;
+}> {
+  const searchParams = fileListSearchParams(request);
+  for (const name of new Set(searchParams.keys())) {
+    if (!['after', 'limit', 'order', 'purpose'].includes(name)) {
+      throw new GatewayHttpError(
+        400,
+        'invalid_file_list_query',
+        `Unsupported file list query parameter: ${name}`,
+      );
+    }
+  }
+  const publicAfter = singleFileListQueryValue(searchParams, 'after');
+  if (publicAfter !== undefined && publicAfter.length === 0) {
+    throw new GatewayHttpError(
+      400,
+      'invalid_file_id',
+      'after must be a Tony Router virtual file ID',
+    );
+  }
+  const rawLimit = singleFileListQueryValue(searchParams, 'limit');
+  if (rawLimit !== undefined && !/^[1-9][0-9]{0,4}$/.test(rawLimit)) {
+    throw new GatewayHttpError(
+      400,
+      'invalid_file_list_query',
+      'limit must be an integer between 1 and 10000',
+    );
+  }
+  const limit = rawLimit === undefined ? 10_000 : Number(rawLimit);
+  if (limit < 1 || limit > 10_000) {
+    throw new GatewayHttpError(
+      400,
+      'invalid_file_list_query',
+      'limit must be an integer between 1 and 10000',
+    );
+  }
+  const rawOrder = singleFileListQueryValue(searchParams, 'order');
+  if (rawOrder !== undefined && rawOrder !== 'asc' && rawOrder !== 'desc') {
+    throw new GatewayHttpError(
+      400,
+      'invalid_file_list_query',
+      'order must be either asc or desc',
+    );
+  }
+  const order: FileListOrder = rawOrder === 'asc' ? 'asc' : 'desc';
+  const purpose = filePurpose(
+    singleFileListQueryValue(searchParams, 'purpose') ?? 'user_data',
+  );
+  return Object.freeze({
+    ...(publicAfter !== undefined ? { publicAfter } : {}),
+    query: Object.freeze({ limit, order, purpose }),
+  });
+}
+
 function requireOwnerMode<TMode extends VirtualFileOwner['mode']>(
   owner: VirtualFileOwner,
   mode: TMode,
@@ -203,6 +322,20 @@ function requireDirectBinding(
       400,
       'invalid_file_id',
       'The supplied file ID is invalid for this Tony Router instance',
+    );
+  }
+}
+
+function requireRoutedAccountOwner(
+  owner: VirtualFileOwner,
+  accountId: string,
+): asserts owner is Extract<VirtualFileOwner, Readonly<{ mode: 'routed' }>> {
+  requireOwnerMode(owner, 'routed');
+  if (owner.accountId !== accountId) {
+    throw new GatewayHttpError(
+      400,
+      'invalid_file_id',
+      'The supplied file ID is invalid for the selected routing account',
     );
   }
 }
@@ -491,6 +624,188 @@ export function buildGateway(options: BuildGatewayOptions): FastifyInstance {
         requestId: request.id,
         signal: abortContext.signal,
       });
+    } finally {
+      abortContext.cleanup();
+    }
+  });
+
+  app.get('/v1/files', async (request, reply) => {
+    if (!provider && !routed) {
+      throw new GatewayHttpError(
+        503,
+        'provider_not_configured',
+        'No OpenAI-compatible upstream is configured',
+      );
+    }
+    const parsed = parseFileListQuery(request);
+    const accountId = routed
+      ? singleHeader(request, 'x-tony-router-account')
+      : undefined;
+    if (routed && !accountId) {
+      throw new GatewayHttpError(
+        400,
+        'file_account_required',
+        'x-tony-router-account is required for routed file listing',
+      );
+    }
+    if (
+      !routed &&
+      singleHeader(request, 'x-tony-router-account') !== undefined
+    ) {
+      throw new GatewayHttpError(
+        400,
+        'invalid_router_header',
+        'x-tony-router-account is available only in routed mode',
+      );
+    }
+
+    let upstreamAfter: string | undefined;
+    let cursorOwner: VirtualFileOwner | undefined;
+    if (parsed.publicAfter) {
+      const identity = fileIds.decode(parsed.publicAfter);
+      cursorOwner = identity.owner;
+      upstreamAfter = identity.upstreamFileId;
+      if (routed) {
+        requireRoutedAccountOwner(cursorOwner, accountId!);
+      } else {
+        requireOwnerMode(cursorOwner, 'direct');
+        requireDirectBinding(cursorOwner, directFileBindingId);
+      }
+    }
+    const query = Object.freeze({
+      ...parsed.query,
+      ...(upstreamAfter ? { after: upstreamAfter } : {}),
+    });
+    const abortContext = createRequestAbortContext(request, reply);
+    try {
+      if (routed) {
+        const listed = await routed.listFiles(
+          accountId!,
+          query,
+          { requestId: request.id, signal: abortContext.signal },
+          cursorOwner?.mode === 'routed' ? cursorOwner.providerId : undefined,
+        );
+        const owner = Object.freeze({
+          mode: 'routed' as const,
+          accountId: listed.accountId,
+          providerId: listed.providerId,
+        });
+        reply.header('x-tony-router-provider', listed.providerId);
+        reply.header('x-tony-router-account', listed.accountId);
+        return publicFileList(fileIds, owner, listed.result);
+      }
+      if (!provider || typeof provider.listFiles !== 'function') {
+        throw new GatewayHttpError(
+          501,
+          'files_api_not_supported',
+          'The configured provider does not support file listing',
+        );
+      }
+      const listed = await provider.listFiles(query, {
+        requestId: request.id,
+        signal: abortContext.signal,
+      });
+      return publicFileList(
+        fileIds,
+        { mode: 'direct', bindingId: directFileBindingId },
+        listed,
+      );
+    } finally {
+      abortContext.cleanup();
+    }
+  });
+
+  app.get('/v1/files/:fileId/content', async (request, reply) => {
+    if (!provider && !routed) {
+      throw new GatewayHttpError(
+        503,
+        'provider_not_configured',
+        'No OpenAI-compatible upstream is configured',
+      );
+    }
+    const params = request.params as Readonly<{ fileId?: unknown }>;
+    if (typeof params.fileId !== 'string') {
+      throw new GatewayHttpError(400, 'invalid_file_id', 'File ID is required');
+    }
+    const identity = fileIds.decode(params.fileId);
+    const abortContext = createRequestAbortContext(request, reply);
+    try {
+      if (routed) {
+        requireOwnerMode(identity.owner, 'routed');
+        const owner = identity.owner;
+        const content = await routed.retrieveFileContent(
+          owner.accountId,
+          owner.providerId,
+          identity.upstreamFileId,
+          { requestId: request.id, signal: abortContext.signal },
+        );
+        reply.header('x-tony-router-provider', content.providerId);
+        reply.header('x-tony-router-account', content.accountId);
+        reply.header('content-type', content.result.contentType);
+        return reply.send(Buffer.from(content.result.bytes));
+      }
+      requireOwnerMode(identity.owner, 'direct');
+      requireDirectBinding(identity.owner, directFileBindingId);
+      if (!provider || typeof provider.retrieveFileContent !== 'function') {
+        throw new GatewayHttpError(
+          501,
+          'files_api_not_supported',
+          'The configured provider does not support file content retrieval',
+        );
+      }
+      const content = await provider.retrieveFileContent(
+        identity.upstreamFileId,
+        { requestId: request.id, signal: abortContext.signal },
+      );
+      reply.header('content-type', content.contentType);
+      return reply.send(Buffer.from(content.bytes));
+    } finally {
+      abortContext.cleanup();
+    }
+  });
+
+  app.get('/v1/files/:fileId', async (request, reply) => {
+    if (!provider && !routed) {
+      throw new GatewayHttpError(
+        503,
+        'provider_not_configured',
+        'No OpenAI-compatible upstream is configured',
+      );
+    }
+    const params = request.params as Readonly<{ fileId?: unknown }>;
+    if (typeof params.fileId !== 'string') {
+      throw new GatewayHttpError(400, 'invalid_file_id', 'File ID is required');
+    }
+    const identity = fileIds.decode(params.fileId);
+    const abortContext = createRequestAbortContext(request, reply);
+    try {
+      if (routed) {
+        requireOwnerMode(identity.owner, 'routed');
+        const owner = identity.owner;
+        const retrieved = await routed.retrieveFile(
+          owner.accountId,
+          owner.providerId,
+          identity.upstreamFileId,
+          { requestId: request.id, signal: abortContext.signal },
+        );
+        reply.header('x-tony-router-provider', retrieved.providerId);
+        reply.header('x-tony-router-account', retrieved.accountId);
+        return publicFileObject(retrieved.result, params.fileId);
+      }
+      requireOwnerMode(identity.owner, 'direct');
+      requireDirectBinding(identity.owner, directFileBindingId);
+      if (!provider || typeof provider.retrieveFile !== 'function') {
+        throw new GatewayHttpError(
+          501,
+          'files_api_not_supported',
+          'The configured provider does not support file metadata retrieval',
+        );
+      }
+      const retrieved = await provider.retrieveFile(identity.upstreamFileId, {
+        requestId: request.id,
+        signal: abortContext.signal,
+      });
+      return publicFileObject(retrieved, params.fileId);
     } finally {
       abortContext.cleanup();
     }

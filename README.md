@@ -13,7 +13,7 @@ Implemented and verified:
 - authenticated `GET /v1/models`
 - authenticated `POST /v1/chat/completions`
 - authenticated `POST /v1/responses` compatibility for text/image/inline-PDF/virtual-file input, JSON Schema structured output, custom function tools, and self-contained tool-result continuation across JSON and SSE streaming
-- authenticated bounded `POST /v1/files` and `DELETE /v1/files/:id` compatibility with opaque account-pinned virtual file IDs
+- authenticated bounded `POST /v1/files`, `GET /v1/files`, `GET /v1/files/:id`, `GET /v1/files/:id/content`, and `DELETE /v1/files/:id` compatibility with opaque account-pinned virtual file IDs
 - non-streaming and validated SSE streaming proxy for Chat Completions
 - upstream timeout, disconnect propagation, redirect rejection, and normalized errors
 - versioned YAML routing registry
@@ -29,7 +29,7 @@ Implemented and verified:
 
 The Responses compatibility layer translates supported requests through the same routed Chat Completions runtime, preserving public model IDs and route/provider/account headers. User messages may mix text with HTTPS image URLs, base64 PNG/JPEG/GIF/WEBP data URLs, and inline base64 PDF files. Image detail (`auto`, `low`, or `high`) and original mixed-content order are preserved. Image requests require `vision: true`; inline PDF requests require `fileInput: true`. PDF bytes are validated as bounded canonical base64 with a PDF header, EOF marker, and basename ending in `.pdf`, then forwarded losslessly as a Chat Completions file content part. Tony Router never fetches, proxies, renders, extracts, OCRs, or persists image/PDF input locally. `text.format.type: json_schema` is translated losslessly to Chat Completions Structured Outputs and requires a model declaring `structuredOutput: true`; Tony Router never silently downgrades it to legacy JSON mode or plain text. Text, refusal, provider-supplied reasoning summary, and custom function-call streams are emitted as ordered Responses lifecycle events with monotonic sequence numbers. Reasoning is never inferred from ordinary assistant text; `reasoning.effort` / `reasoning.summary` are forwarded only to routes declaring `reasoning: true`. Function argument deltas are aggregated exactly into completed output items; malformed or truncated upstream data after output becomes a terminal `error` event and never triggers fallback after emission.
 
-Clients can complete a custom function loop without gateway persistence by resending prior assistant `message` / `function_call` items together with matching `function_call_output` items. Tony Router validates that every call ID has exactly one preceding call and one completed text output before forwarding the continuation. Files uploaded through `POST /v1/files` receive an opaque virtual ID that encrypts the upstream file identity and, in routed mode, pins every use and deletion to the owning provider account. The gateway accepts only one file, `purpose=user_data`, and at most 16 MiB per upload; routed uploads require `x-tony-router-account`. Upload bytes are forwarded without local persistence or content logging. `input_file.file_url`, file listing/retrieval/content download, image/file tool outputs, server-side `previous_response_id`, hosted tools, encrypted/private reasoning content, background execution, stored responses, and automatic tool execution remain explicitly unsupported.
+Clients can complete a custom function loop without gateway persistence by resending prior assistant `message` / `function_call` items together with matching `function_call_output` items. Tony Router validates that every call ID has exactly one preceding call and one completed text output before forwarding the continuation. Files uploaded through `POST /v1/files` receive an opaque virtual ID that encrypts the upstream file identity and, in routed mode, pins every use and deletion to the owning provider account. The gateway accepts only one file, `purpose=user_data`, and at most 16 MiB per upload; routed uploads and routed list operations require `x-tony-router-account`. File listing is account-scoped, and `after` cursors are Tony Router virtual IDs that must belong to the selected account. Metadata, content, Responses input, and deletion decode the virtual ID and invoke only the exact owning provider account. Content downloads are bounded to 16 MiB and are forwarded without local persistence or content logging. `input_file.file_url`, image/file tool outputs, server-side `previous_response_id`, hosted tools, encrypted/private reasoning content, background execution, stored responses, and automatic tool execution remain explicitly unsupported.
 
 The routing engine lives in `@tony-router/core`; the Fastify gateway wires profiles to provider accounts and keeps public model IDs stable across JSON and SSE responses.
 
@@ -120,6 +120,18 @@ FILE_JSON="$(curl --silent http://127.0.0.1:8787/v1/files \
   -F "purpose=user_data" \
   -F "file=@spec.pdf;type=application/pdf")"
 FILE_ID="$(printf '%s' "$FILE_JSON" | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).id')"
+
+# Routed listing is intentionally account-scoped. Returned IDs and pagination cursors remain opaque.
+curl "http://127.0.0.1:8787/v1/files?limit=100&order=desc&purpose=user_data" \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
+  -H "x-tony-router-account: work"
+
+curl "http://127.0.0.1:8787/v1/files/$FILE_ID" \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)"
+
+curl "http://127.0.0.1:8787/v1/files/$FILE_ID/content" \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
+  --output downloaded-spec.pdf
 
 curl --no-buffer http://127.0.0.1:8787/v1/responses \
   -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
@@ -281,7 +293,7 @@ Client / Coding Agent
 Protocol Gateway
   - OpenAI Chat Completions
   - OpenAI Responses (text/image/file/structured/function JSON + SSE compatibility)
-  - OpenAI Files create/delete with account-pinned virtual IDs
+  - OpenAI Files create/list/retrieve/content/delete with account-pinned virtual IDs
   - Anthropic Messages (planned)
         |
         v
