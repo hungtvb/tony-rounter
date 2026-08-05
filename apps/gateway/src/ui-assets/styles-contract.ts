@@ -110,6 +110,7 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.8; strok
 .nav-icon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--color-fg-muted); }
 .nav-item span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-footer { margin-top: auto; display: grid; gap: var(--space-3); }
+.sidebar-footer .button svg { width: 16px; height: 16px; flex: 0 0 auto; }
 .runtime-mini { padding: var(--space-3); border-top: 1px solid var(--color-border-subtle); border-bottom: 1px solid var(--color-border-subtle); }
 .runtime-heading, .runtime-mini dl div { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .runtime-mini dl { margin: var(--space-2) 0 0; display: grid; gap: var(--space-2); }
@@ -331,7 +332,13 @@ input[type="range"] { min-height: 24px; padding: 0; accent-color: var(--tony-lim
   .brand { justify-content: center; padding: 0; }
   .nav-item { justify-content: center; padding: 0; }
   .nav-icon { width: 20px; height: 20px; }
-  .sidebar-footer .button { padding: 0; }
+  .sidebar-footer .button { padding: 0; overflow: hidden; }
+  .topbar { gap: var(--space-3); }
+  .crumbs > span:first-child, .connection-label { display: none; }
+  .topbar-actions { min-width: 0; gap: var(--space-1); }
+  .topbar-connection { width: 36px; min-height: 36px; padding: 0; font-size: 0; }
+  .topbar-connection::before { content: '↔'; font-size: 16px; line-height: 1; }
+  .connection-pill { width: 32px; min-height: 32px; justify-content: center; padding: 0; }
   .runtime-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .runtime-stat:nth-child(4), .runtime-stat:nth-child(5) { border-top: 1px solid var(--color-border-subtle); }
   .runtime-stat:nth-child(4) { border-left: 0; }
@@ -347,10 +354,6 @@ input[type="range"] { min-height: 24px; padding: 0; accent-color: var(--tony-lim
   .app-shell { display: block; }
   .sidebar { display: none; }
   .topbar { min-height: 56px; padding: 0 var(--space-4); }
-  .crumbs > span:first-child, .connection-label { display: none; }
-  .topbar-connection { width: 36px; min-height: 36px; padding: 0; font-size: 0; }
-  .topbar-connection::before { content: '↔'; font-size: 16px; line-height: 1; }
-  .connection-pill { width: 32px; min-height: 32px; justify-content: center; padding: 0; }
   .content { padding: var(--space-6) var(--space-4) 92px; }
   .page-heading { display: grid; gap: var(--space-4); margin-bottom: var(--space-6); }
   .page-heading h1 { font-size: 28px; }

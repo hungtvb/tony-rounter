@@ -51,8 +51,8 @@ export const UI_HTML = String.raw`<!doctype html>
             <div><dt>Uptime</dt><dd id="sidebarUptime">—</dd></div>
           </dl>
         </div>
-        <button class="button button-secondary button-full" id="healthButton" type="button">Open /health</button>
-        <button class="button button-quiet button-full" id="disconnectButton" type="button">Disconnect</button>
+        <button class="button button-secondary button-full" id="healthButton" type="button" aria-label="Open gateway health endpoint"><svg><use href="#i-shield"/></svg><span>Open /health</span></button>
+        <button class="button button-quiet button-full" id="disconnectButton" type="button" aria-label="Disconnect local token"><svg><use href="#i-connection"/></svg><span>Disconnect</span></button>
       </div>
     </aside>
 

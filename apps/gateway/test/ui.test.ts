@@ -215,6 +215,11 @@ describe('local runtime dashboard', () => {
     expect(response.body).toContain('validateSetupButton');
     expect(response.body).toContain('applySetupButton');
     expect(response.body).toContain('generationList');
+    expect(response.body).toContain(
+      'aria-label="Open gateway health endpoint"',
+    );
+    expect(response.body).toContain('<span>Open /health</span>');
+    expect(response.body).toContain('aria-label="Disconnect local token"');
     expect(response.body).toContain('/ui/styles.css');
     expect(response.body).toContain('/ui/app.js');
     expect(response.body).not.toContain(TOKEN);
@@ -245,6 +250,21 @@ describe('local runtime dashboard', () => {
       '.table-shell { min-width: 0; max-width: 100%;',
     );
     expect(styles.body).toContain('.table-scroll { width: 100%; min-width: 0;');
+    expect(styles.body).toContain(
+      '.sidebar-footer .button svg { width: 16px; height: 16px;',
+    );
+    expect(styles.body).toContain(
+      '.sidebar-footer .button { padding: 0; overflow: hidden; }',
+    );
+    expect(styles.body).toContain(
+      '.topbar-actions { min-width: 0; gap: var(--space-1); }',
+    );
+    expect(styles.body).toContain(
+      '.topbar-connection { width: 36px; min-height: 36px;',
+    );
+    expect(styles.body).toContain(
+      '.connection-pill { width: 32px; min-height: 32px;',
+    );
     expect(styles.body).toContain('.mobile-nav');
     expect(styles.body).toContain('@media (prefers-reduced-motion: reduce)');
     expect(styles.body).toContain('.control-history');
