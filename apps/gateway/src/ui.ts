@@ -36,12 +36,39 @@ export interface UiProfileInventoryItem {
   readonly accountCount: number;
 }
 
+export interface UiModelInventoryItem {
+  readonly id: string;
+  readonly providerId: string;
+  readonly upstreamModel: string;
+  readonly capabilities: {
+    readonly tools: boolean;
+    readonly parallelToolCalls: boolean;
+    readonly vision: boolean;
+    readonly structuredOutput: boolean;
+    readonly fileInput: boolean;
+    readonly reasoning: boolean;
+    readonly contextTokens: number;
+  };
+}
+
+export interface UiRouteInventoryItem {
+  readonly id: string;
+  readonly modelId: string;
+  readonly providerId: string;
+  readonly accountId: string;
+  readonly profileIds: readonly string[];
+  readonly enabled: boolean;
+  readonly priority: number;
+}
+
 export interface UiRoutingInventory {
   readonly version: 1 | 2;
   readonly defaultProfileId: string;
   readonly providers: readonly UiProviderInventoryItem[];
   readonly accounts: readonly UiAccountInventoryItem[];
   readonly profiles: readonly UiProfileInventoryItem[];
+  readonly models: readonly UiModelInventoryItem[];
+  readonly routes: readonly UiRouteInventoryItem[];
 }
 
 export interface UiControlInfo {
@@ -144,12 +171,60 @@ export function buildUiRoutingInventory(
     })
     .sort((left, right) => left.id.localeCompare(right.id));
 
+  const modelItems = models
+    .map((model): UiModelInventoryItem =>
+      Object.freeze({
+        id: model.id,
+        providerId: model.providerId,
+        upstreamModel: model.upstreamModel,
+        capabilities: Object.freeze({
+          tools: model.capabilities.tools,
+          parallelToolCalls: model.capabilities.parallelToolCalls,
+          vision: model.capabilities.vision,
+          structuredOutput: model.capabilities.structuredOutput,
+          fileInput: model.capabilities.fileInput === true,
+          reasoning: model.capabilities.reasoning === true,
+          contextTokens: model.capabilities.contextTokens,
+        }),
+      }),
+    )
+    .sort((left, right) => left.id.localeCompare(right.id));
+
+  const routeItems = routes
+    .map((route): UiRouteInventoryItem => {
+      const model = registry.models[route.modelId];
+      const account = registry.accounts[route.accountId];
+      return Object.freeze({
+        id: route.id,
+        modelId: route.modelId,
+        providerId: account?.providerId ?? model?.providerId ?? '',
+        accountId: route.accountId,
+        profileIds: Object.freeze(
+          Object.values(registry.profiles)
+            .filter((profile) =>
+              profile.routes.some((entry) => entry.routeId === route.id),
+            )
+            .map((profile) => profile.id)
+            .sort((left, right) => left.localeCompare(right)),
+        ),
+        enabled: route.enabled,
+        priority: route.priority,
+      });
+    })
+    .sort((left, right) => {
+      if (left.priority !== right.priority)
+        return right.priority - left.priority;
+      return left.id.localeCompare(right.id);
+    });
+
   return Object.freeze({
     version: registry.version,
     defaultProfileId: registry.defaultProfileId,
     providers: Object.freeze(providerItems),
     accounts: Object.freeze(accountItems),
     profiles: Object.freeze(profileItems),
+    models: Object.freeze(modelItems),
+    routes: Object.freeze(routeItems),
   });
 }
 

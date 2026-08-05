@@ -11,7 +11,9 @@ export const UI_JS_PART_1 = String.raw`(() => {
     generations: [],
     accountHealth: Object.create(null),
     healthRunning: Object.create(null),
-    currentView: 'dashboard'
+    currentView: 'overview',
+    apiMode: 'responses',
+    theme: document.documentElement.dataset.theme || 'dark'
   };
 
   const elements = {
@@ -24,6 +26,7 @@ export const UI_JS_PART_1 = String.raw`(() => {
     footerVersion: byId('footerVersion'),
     footerAddress: byId('footerAddress'),
     gatewayMetric: byId('gatewayMetric'),
+    gatewayStatusDot: byId('gatewayStatusDot'),
     gatewayDetail: byId('gatewayDetail'),
     providerMetric: byId('providerMetric'),
     providerDetail: byId('providerDetail'),
@@ -96,11 +99,17 @@ export const UI_JS_PART_1 = String.raw`(() => {
     connectionSubtitle: byId('connectionSubtitle'),
     refreshButton: byId('refreshButton'),
     healthButton: byId('healthButton'),
-    toast: byId('toast')
+    toast: byId('toast'),
+    routingPlanList: byId('routingPlanList'),
+    attentionList: byId('attentionList'),
+    attentionCountLabel: byId('attentionCountLabel'),
+    themeButton: byId('themeButton'),
+    fontStatus: byId('fontStatus'),
+    requestModeHint: byId('requestModeHint')
   };
 
   const viewMetadata = {
-    dashboard: ['Dashboard', 'Overview of your Tony Router gateway'],
+    overview: ['Overview', 'Routing status and bounded local telemetry'],
     providers: ['Providers', 'Inspect accounts and generate safe routed configuration'],
     models: ['Models', 'Browse models exposed by the active provider'],
     playground: ['Chat Playground', 'Send a real streaming Chat Completions request'],
@@ -143,7 +152,8 @@ export const UI_JS_PART_1 = String.raw`(() => {
 
   function setPill(element, mode, label) {
     element.className = 'connection-pill ' + mode;
-    element.lastChild.textContent = label;
+    const labelNode = element.querySelector('.connection-label');
+    if (labelNode) labelNode.textContent = label;
   }
 
   function setView(view) {
@@ -152,13 +162,17 @@ export const UI_JS_PART_1 = String.raw`(() => {
     document.querySelectorAll('[data-view]').forEach((section) => {
       section.classList.toggle('is-active', section.dataset.view === view);
     });
-    document.querySelectorAll('.nav-item[data-view-target]').forEach((button) => {
-      button.classList.toggle('is-active', button.dataset.viewTarget === view);
+    document.querySelectorAll('.nav-item[data-view-target], .mobile-nav [data-view-target]').forEach((button) => {
+      const active = button.dataset.viewTarget === view;
+      button.classList.toggle('is-active', active);
+      if (active) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
     });
     elements.pageTitle.textContent = viewMetadata[view][0];
     elements.pageSubtitle.textContent = viewMetadata[view][1];
     history.replaceState(null, '', '#'+ view);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
   }
 
   function formatDuration(milliseconds) {

@@ -109,6 +109,29 @@ interface DashboardTestResponse {
       readonly accountCount: number;
       readonly routeCount: number;
     }[];
+    readonly models: readonly {
+      readonly id: string;
+      readonly providerId: string;
+      readonly upstreamModel: string;
+      readonly capabilities: {
+        readonly tools: boolean;
+        readonly parallelToolCalls: boolean;
+        readonly vision: boolean;
+        readonly structuredOutput: boolean;
+        readonly fileInput: boolean;
+        readonly reasoning: boolean;
+        readonly contextTokens: number;
+      };
+    }[];
+    readonly routes: readonly {
+      readonly id: string;
+      readonly modelId: string;
+      readonly providerId: string;
+      readonly accountId: string;
+      readonly profileIds: readonly string[];
+      readonly enabled: boolean;
+      readonly priority: number;
+    }[];
   };
   readonly telemetry: {
     readonly requestsSinceStart: number;
@@ -181,13 +204,22 @@ describe('local runtime dashboard', () => {
       "connect-src 'self'",
     );
     expect(response.body).toContain('Tony Router');
-    expect(response.body).toContain('Request Traces');
-    expect(response.body).toContain('Providers &amp; Accounts');
+    expect(response.body).toContain('Request traces');
+    expect(response.body).toContain('Providers and accounts');
+    expect(response.body).toContain('Active routing plan');
+    expect(response.body).toContain('Needs attention');
+    expect(response.body).toContain('data-view="overview"');
+    expect(response.body).toContain('data-api-mode="responses"');
     expect(response.body).toContain('Environment-only setup');
     expect(response.body).toContain('routingConfigOutput');
     expect(response.body).toContain('validateSetupButton');
     expect(response.body).toContain('applySetupButton');
     expect(response.body).toContain('generationList');
+    expect(response.body).toContain(
+      'aria-label="Open gateway health endpoint"',
+    );
+    expect(response.body).toContain('<span>Open /health</span>');
+    expect(response.body).toContain('aria-label="Disconnect local token"');
     expect(response.body).toContain('/ui/styles.css');
     expect(response.body).toContain('/ui/app.js');
     expect(response.body).not.toContain(TOKEN);
@@ -205,9 +237,36 @@ describe('local runtime dashboard', () => {
 
     expect(styles.statusCode).toBe(200);
     expect(styles.headers['content-type']).toContain('text/css');
-    expect(styles.body).toContain('.dashboard-grid');
+    expect(styles.body).toContain('--font-sans: Inter');
+    expect(styles.body).toContain('--font-mono: "JetBrains Mono"');
+    expect(styles.body).toContain('--tony-lime-400: #c8f500');
+    expect(styles.body).toContain('.overview-grid');
+    expect(styles.body).toContain('.routing-list');
     expect(styles.body).toContain('.providers-layout');
-    expect(styles.body).toContain('.provider-account-row');
+    expect(styles.body).toContain('.provider-table');
+    expect(styles.body).toContain('.content { min-width: 0;');
+    expect(styles.body).toContain('.view { min-width: 0;');
+    expect(styles.body).toContain(
+      '.table-shell { min-width: 0; max-width: 100%;',
+    );
+    expect(styles.body).toContain('.table-scroll { width: 100%; min-width: 0;');
+    expect(styles.body).toContain(
+      '.sidebar-footer .button svg { width: 16px; height: 16px;',
+    );
+    expect(styles.body).toContain(
+      '.sidebar-footer .button { padding: 0; overflow: hidden; }',
+    );
+    expect(styles.body).toContain(
+      '.topbar-actions { min-width: 0; gap: var(--space-1); }',
+    );
+    expect(styles.body).toContain(
+      '.topbar-connection { width: 36px; min-height: 36px;',
+    );
+    expect(styles.body).toContain(
+      '.connection-pill { width: 32px; min-height: 32px;',
+    );
+    expect(styles.body).toContain('.mobile-nav');
+    expect(styles.body).toContain('@media (prefers-reduced-motion: reduce)');
     expect(styles.body).toContain('.control-history');
     expect(styles.body).toContain('.generation-row');
     expect(styles.body).not.toContain(TOKEN);
@@ -220,6 +279,11 @@ describe('local runtime dashboard', () => {
     expect(script.body).toContain("fetch('/ui/api/dashboard'");
     expect(script.body).toContain("fetch('/v1/models'");
     expect(script.body).toContain("fetch('/v1/chat/completions'");
+    expect(script.body).toContain("'/v1/responses'");
+    expect(script.body).toContain('function renderRoutingPlan()');
+    expect(script.body).toContain('function renderAttention()');
+    expect(script.body).toContain('function runPlayground()');
+    expect(script.body).toContain('function applyTheme(theme)');
     expect(script.body).toContain('function renderProviders()');
     expect(script.body).toContain('function generateSetupConfiguration()');
     expect(script.body).toContain('data-setup-provider');
@@ -317,7 +381,7 @@ describe('local runtime dashboard', () => {
     const body = response.json<DashboardTestResponse>();
 
     expect(response.statusCode).toBe(200);
-    expect(body.routing).toEqual({
+    expect(body.routing).toMatchObject({
       version: 2,
       defaultProfileId: 'tony-auto',
       providers: [
@@ -351,6 +415,42 @@ describe('local runtime dashboard', () => {
           routeCount: 2,
         }),
       ],
+      models: [
+        expect.objectContaining({
+          id: 'gpt',
+          providerId: 'openai',
+          upstreamModel: 'gpt-5',
+        }),
+      ],
+      routes: [
+        expect.objectContaining({
+          id: 'personal-route',
+          modelId: 'gpt',
+          providerId: 'openai',
+          accountId: 'personal',
+          profileIds: ['tony-auto'],
+          enabled: true,
+          priority: 20,
+        }),
+        expect.objectContaining({
+          id: 'work-route',
+          modelId: 'gpt',
+          providerId: 'openai',
+          accountId: 'work',
+          profileIds: ['tony-auto'],
+          enabled: true,
+          priority: 10,
+        }),
+      ],
+    });
+    expect(body.routing?.models[0]?.capabilities).toEqual({
+      tools: true,
+      parallelToolCalls: true,
+      vision: false,
+      structuredOutput: true,
+      fileInput: false,
+      reasoning: false,
+      contextTokens: 128000,
     });
     expect(response.body).toContain('https://work.openai.example/v1');
     expect(response.body).not.toContain(ROUTED_SECRET);
