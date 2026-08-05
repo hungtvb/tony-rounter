@@ -1,0 +1,86 @@
+name: Verify Tony Router UI 50
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/ui50-verify.yml
+      - .github/ui50-patch/**
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout verification branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Decode candidate patch on exact base
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/ui50-patch/part-* | base64 -d | xz -d > "$RUNNER_TEMP/ui50.patch"
+          git checkout --detach "${{ github.event.pull_request.base.sha }}"
+          git apply --index "$RUNNER_TEMP/ui50.patch"
+          git diff --cached --check
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Activate pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+          pnpm --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format candidate
+        run: pnpm format
+
+      - name: Verify candidate
+        run: pnpm verify
+
+      - name: Commit and publish verified UI branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(ui): implement approved control-plane workspace"
+          git push origin HEAD:refs/heads/feat/approved-control-plane-ui
+
+      - name: Package exact verified repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --local --unset-all credential.helper || true
+          test -z "$(git status --short)"
+          git fsck --full
+          ARCHIVE="$RUNNER_TEMP/tony-rounter-ui50-verified-with-git.tar.gz"
+          tar -C "$GITHUB_WORKSPACE" -czf "$ARCHIVE" .
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+
+      - name: Upload exact verified source
+        uses: actions/upload-artifact@v4
+        with:
+          name: tony-rounter-ui50-verified-with-git
+          path: |
+            ${{ runner.temp }}/tony-rounter-ui50-verified-with-git.tar.gz
+            ${{ runner.temp }}/tony-rounter-ui50-verified-with-git.tar.gz.sha256
+          retention-days: 1
+          if-no-files-found: error
