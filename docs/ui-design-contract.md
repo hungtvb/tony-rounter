@@ -128,8 +128,9 @@ Explain the local security boundary. The local bearer token may be held only for
 Use **Inter** for navigation, headings, labels, controls, body copy, tables, and status text.
 
 ```css
---font-sans: Inter, "Inter Variable", -apple-system, BlinkMacSystemFont,
-  "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+--font-sans:
+  Inter, 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+  Roboto, Helvetica, Arial, sans-serif;
 ```
 
 ### Technical font
@@ -145,7 +146,7 @@ Use **JetBrains Mono** for:
 - latency and machine-readable values where alignment helps.
 
 ```css
---font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+--font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
 ```
 
 Production must load these fonts deterministically. Prefer bundled/self-hosted assets for the local control plane; an approved external stylesheet is acceptable only when the runtime policy permits it. Verification screenshots must wait for `document.fonts.ready` and confirm that Inter and JetBrains Mono are actually loaded rather than silently falling back.

@@ -99,6 +99,18 @@ describe('Responses inline PDF translation', () => {
     ]);
   });
 
+  it('preserves virtual file IDs for gateway ownership resolution', () => {
+    expect(
+      translate([{ type: 'input_file', file_id: 'file-tr-v1_public' }])
+        .messages,
+    ).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'file', file: { file_id: 'file-tr-v1_public' } }],
+      },
+    ]);
+  });
+
   it.each([
     [
       'missing source',
@@ -114,11 +126,6 @@ describe('Responses inline PDF translation', () => {
         filename: 'spec.pdf',
       },
       'invalid_request',
-    ],
-    [
-      'uploaded file ID',
-      { type: 'input_file', file_id: 'file-123' },
-      'unsupported_responses_feature',
     ],
     [
       'file URL',

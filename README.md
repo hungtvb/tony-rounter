@@ -12,7 +12,8 @@ Implemented and verified:
 - generated local bearer token and redacted JSON logs
 - authenticated `GET /v1/models`
 - authenticated `POST /v1/chat/completions`
-- authenticated `POST /v1/responses` compatibility for text/image/inline-PDF input, JSON Schema structured output, custom function tools, and self-contained tool-result continuation across JSON and SSE streaming
+- authenticated `POST /v1/responses` compatibility for text/image/inline-PDF/virtual-file input, JSON Schema structured output, custom function tools, and self-contained tool-result continuation across JSON and SSE streaming
+- authenticated bounded `POST /v1/files` and `DELETE /v1/files/:id` compatibility with opaque account-pinned virtual file IDs
 - non-streaming and validated SSE streaming proxy for Chat Completions
 - upstream timeout, disconnect propagation, redirect rejection, and normalized errors
 - versioned YAML routing registry
@@ -28,7 +29,7 @@ Implemented and verified:
 
 The Responses compatibility layer translates supported requests through the same routed Chat Completions runtime, preserving public model IDs and route/provider/account headers. User messages may mix text with HTTPS image URLs, base64 PNG/JPEG/GIF/WEBP data URLs, and inline base64 PDF files. Image detail (`auto`, `low`, or `high`) and original mixed-content order are preserved. Image requests require `vision: true`; inline PDF requests require `fileInput: true`. PDF bytes are validated as bounded canonical base64 with a PDF header, EOF marker, and basename ending in `.pdf`, then forwarded losslessly as a Chat Completions file content part. Tony Router never fetches, proxies, renders, extracts, OCRs, or persists image/PDF input locally. `text.format.type: json_schema` is translated losslessly to Chat Completions Structured Outputs and requires a model declaring `structuredOutput: true`; Tony Router never silently downgrades it to legacy JSON mode or plain text. Text, refusal, provider-supplied reasoning summary, and custom function-call streams are emitted as ordered Responses lifecycle events with monotonic sequence numbers. Reasoning is never inferred from ordinary assistant text; `reasoning.effort` / `reasoning.summary` are forwarded only to routes declaring `reasoning: true`. Function argument deltas are aggregated exactly into completed output items; malformed or truncated upstream data after output becomes a terminal `error` event and never triggers fallback after emission.
 
-Clients can complete a custom function loop without gateway persistence by resending prior assistant `message` / `function_call` items together with matching `function_call_output` items. Tony Router validates that every call ID has exactly one preceding call and one completed text output before forwarding the continuation. Responses `input_file.file_id` remains unsupported until provider/account ownership can be pinned safely; `input_file.file_url` remains unsupported because Tony Router does not fetch remote files. Image/file tool outputs, server-side `previous_response_id`, hosted tools, encrypted/private reasoning content, background execution, stored responses, and automatic tool execution also remain explicitly unsupported.
+Clients can complete a custom function loop without gateway persistence by resending prior assistant `message` / `function_call` items together with matching `function_call_output` items. Tony Router validates that every call ID has exactly one preceding call and one completed text output before forwarding the continuation. Files uploaded through `POST /v1/files` receive an opaque virtual ID that encrypts the upstream file identity and, in routed mode, pins every use and deletion to the owning provider account. The gateway accepts only one file, `purpose=user_data`, and at most 16 MiB per upload; routed uploads require `x-tony-router-account`. Upload bytes are forwarded without local persistence or content logging. `input_file.file_url`, file listing/retrieval/content download, image/file tool outputs, server-side `previous_response_id`, hosted tools, encrypted/private reasoning content, background execution, stored responses, and automatic tool execution remain explicitly unsupported.
 
 The routing engine lives in `@tony-router/core`; the Fastify gateway wires profiles to provider accounts and keeps public model IDs stable across JSON and SSE responses.
 
@@ -43,7 +44,7 @@ pnpm --filter @tony-router/gateway build
 pnpm --filter @tony-router/gateway start
 ```
 
-The gateway listens on `127.0.0.1:8787` by default. Without `TONY_ROUTER_TOKEN`, a 256-bit token is created at `~/.tony-router/token`.
+The gateway listens on `127.0.0.1:8787` by default. Without `TONY_ROUTER_TOKEN`, a 256-bit token is created at `~/.tony-router/token`. A separate server-only key for virtual file IDs is loaded from `TONY_ROUTER_FILE_ID_KEY` or generated at `~/.tony-router/file-id-key`; rotating this key invalidates outstanding virtual IDs.
 
 For the simplest legacy mode, configure one OpenAI-compatible upstream:
 
@@ -111,6 +112,31 @@ curl --no-buffer http://127.0.0.1:8787/v1/responses \
     }],
     "stream": true
   }'
+
+# Routed file uploads require an explicit owning account. Omit the account header in legacy direct mode.
+FILE_JSON="$(curl --silent http://127.0.0.1:8787/v1/files \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
+  -H "x-tony-router-account: work" \
+  -F "purpose=user_data" \
+  -F "file=@spec.pdf;type=application/pdf")"
+FILE_ID="$(printf '%s' "$FILE_JSON" | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).id')"
+
+curl --no-buffer http://127.0.0.1:8787/v1/responses \
+  -H "Authorization: Bearer $(cat ~/.tony-router/token)" \
+  -H "Content-Type: application/json" \
+  -d "$(cat <<JSON
+{
+  "model": "tony-auto",
+  "input": [{
+    "role": "user",
+    "content": [
+      {"type": "input_text", "text": "Summarize this file."},
+      {"type": "input_file", "file_id": "$FILE_ID"}
+    ]
+  }]
+}
+JSON
+)"
 
 # Inline PDFs are forwarded only to a route declaring fileInput: true.
 PDF_DATA="$(base64 < spec.pdf | tr -d '\n')"
@@ -254,7 +280,8 @@ Client / Coding Agent
         v
 Protocol Gateway
   - OpenAI Chat Completions
-  - OpenAI Responses (text/image/structured/function JSON + SSE compatibility)
+  - OpenAI Responses (text/image/file/structured/function JSON + SSE compatibility)
+  - OpenAI Files create/delete with account-pinned virtual IDs
   - Anthropic Messages (planned)
         |
         v
@@ -279,7 +306,8 @@ Provider Accounts
 ## Security boundaries
 
 - Loopback bind by default; non-loopback requires explicit opt-in.
-- Local and upstream credentials are redacted and never printed at startup.
+- Local and upstream credentials, including the server-only virtual-file-ID key, are redacted and never printed at startup.
+- Virtual file IDs are authenticated ciphertext; possession of the client bearer token alone does not reveal or authorize another provider account.
 - Upstream redirects are rejected before credentials can be forwarded elsewhere.
 - YAML aliases are disabled and configuration size is bounded.
 - MCP runtimes and arbitrary subprocess execution are not embedded in the gateway.

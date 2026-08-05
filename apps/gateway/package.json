@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@fastify/multipart": "10.1.0",
     "@tony-router/core": "workspace:*",
     "fastify": "5.10.0"
   },
