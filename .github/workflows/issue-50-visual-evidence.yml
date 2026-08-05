@@ -1,0 +1,370 @@
+name: Issue 50 visual evidence
+
+on:
+  pull_request:
+    branches:
+      - feat/issue-50-control-plane-ui
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    if: github.head_ref == 'automation/issue-50-visual-evidence'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact product branch head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assert exact source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "487f829d7575516f32f6aa370f6d03b276592836"
+          test "$(git rev-parse HEAD^{tree})" = "4a8641fcb5c1d168d557a50879628b333b0f1760"
+          test ! -e .github/workflows/issue-50-visual-evidence.yml
+          git diff --exit-code
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install and build exact source
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Start routed local gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(openssl rand -hex 32)"
+          file_key="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          echo "::add-mask::$file_key"
+          echo "TONY_ROUTER_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "TONY_ROUTER_FILE_ID_KEY=$file_key" >> "$GITHUB_ENV"
+
+          cat > "$RUNNER_TEMP/router.yaml" <<'YAML'
+          version: 2
+          defaultProfile: coding
+          providers:
+            openai:
+              kind: openai-compatible
+          accounts:
+            personal:
+              provider: openai
+            work:
+              provider: openai
+          models:
+            fast:
+              provider: openai
+              upstreamModel: gpt-5-mini
+              capabilities:
+                tools: true
+                parallelToolCalls: true
+                vision: false
+                structuredOutput: true
+                fileInput: false
+                reasoning: true
+                contextTokens: 128000
+            vision:
+              provider: openai
+              upstreamModel: gpt-5
+              capabilities:
+                tools: true
+                parallelToolCalls: true
+                vision: true
+                structuredOutput: true
+                fileInput: true
+                reasoning: true
+                contextTokens: 200000
+          routes:
+            fast-personal:
+              model: fast
+              account: personal
+              enabled: true
+              priority: 30
+            fast-work:
+              model: fast
+              account: work
+              enabled: true
+              priority: 20
+            vision-work:
+              model: vision
+              account: work
+              enabled: true
+              priority: 10
+          profiles:
+            coding:
+              routes:
+                - route: fast-personal
+                  priority: 100
+                - route: fast-work
+                  priority: 90
+                - route: vision-work
+                  priority: 50
+          YAML
+
+          cat > "$RUNNER_TEMP/providers.json" <<'JSON'
+          {
+            "version": 2,
+            "providers": {
+              "openai": {
+                "baseUrl": "https://api.openai.com/v1",
+                "timeoutMs": 60000
+              }
+            },
+            "accounts": {
+              "personal": {
+                "provider": "openai",
+                "apiKeyEnv": "OPENAI_PERSONAL_KEY"
+              },
+              "work": {
+                "provider": "openai",
+                "apiKeyEnv": "OPENAI_WORK_KEY",
+                "timeoutMs": 90000
+              }
+            }
+          }
+          JSON
+
+          export TONY_ROUTER_TOKEN="$token"
+          export TONY_ROUTER_FILE_ID_KEY="$file_key"
+          export TONY_ROUTER_HOST=127.0.0.1
+          export TONY_ROUTER_PORT=8787
+          export TONY_ROUTER_ROUTING_CONFIG_FILE="$RUNNER_TEMP/router.yaml"
+          export TONY_ROUTER_PROVIDER_CONFIG_FILE="$RUNNER_TEMP/providers.json"
+          export OPENAI_PERSONAL_KEY=evidence-personal-placeholder
+          export OPENAI_WORK_KEY=evidence-work-placeholder
+          node apps/gateway/dist/server.js > "$RUNNER_TEMP/gateway.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/gateway.pid"
+
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8787/ui >/dev/null; then
+              exit 0
+            fi
+            sleep 0.25
+          done
+          cat "$RUNNER_TEMP/gateway.log"
+          exit 1
+
+      - name: Capture exact-build visual and responsive evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          test -n "$chrome"
+          "$chrome" --headless=new --no-sandbox --disable-dev-shm-usage --hide-scrollbars --remote-debugging-port=9222 --user-data-dir="$RUNNER_TEMP/chrome" about:blank > "$RUNNER_TEMP/chrome.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/chrome.pid"
+
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:9222/json/version >/dev/null; then
+              break
+            fi
+            sleep 0.25
+          done
+
+          cat > "$RUNNER_TEMP/capture.mjs" <<'NODE'
+          import { writeFile } from 'node:fs/promises';
+
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const token = process.env.TONY_ROUTER_TOKEN;
+          if (!token) throw new Error('Missing evidence token');
+
+          const targets = await fetch('http://127.0.0.1:9222/json/list').then((response) => response.json());
+          const target = targets.find((candidate) => candidate.type === 'page');
+          if (!target?.webSocketDebuggerUrl) throw new Error('Chrome page target unavailable');
+
+          const socket = new WebSocket(target.webSocketDebuggerUrl);
+          await new Promise((resolve, reject) => {
+            socket.addEventListener('open', resolve, { once: true });
+            socket.addEventListener('error', reject, { once: true });
+          });
+
+          let sequence = 0;
+          const pending = new Map();
+          const eventWaiters = new Map();
+          socket.addEventListener('message', (event) => {
+            const message = JSON.parse(String(event.data));
+            if (message.id) {
+              const waiter = pending.get(message.id);
+              if (!waiter) return;
+              pending.delete(message.id);
+              if (message.error) waiter.reject(new Error(JSON.stringify(message.error)));
+              else waiter.resolve(message.result);
+              return;
+            }
+            const waiters = eventWaiters.get(message.method);
+            if (!waiters?.length) return;
+            eventWaiters.delete(message.method);
+            for (const resolve of waiters) resolve(message.params);
+          });
+
+          function send(method, params = {}) {
+            const id = ++sequence;
+            return new Promise((resolve, reject) => {
+              pending.set(id, { resolve, reject });
+              socket.send(JSON.stringify({ id, method, params }));
+            });
+          }
+
+          function waitFor(method) {
+            return new Promise((resolve) => {
+              const waiters = eventWaiters.get(method) ?? [];
+              waiters.push(resolve);
+              eventWaiters.set(method, waiters);
+            });
+          }
+
+          async function navigate(url) {
+            const loaded = waitFor('Page.loadEventFired');
+            await send('Page.navigate', { url });
+            await loaded;
+          }
+
+          async function evaluate(expression) {
+            const result = await send('Runtime.evaluate', {
+              expression,
+              awaitPromise: true,
+              returnByValue: true,
+            });
+            if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+            return result.result?.value;
+          }
+
+          await send('Page.enable');
+          await send('Runtime.enable');
+          await navigate('http://127.0.0.1:8787/ui');
+          await evaluate(`sessionStorage.setItem('tony-router-token', ${JSON.stringify(token)}); sessionStorage.setItem('tony-router-theme', 'dark')`);
+          await navigate('http://127.0.0.1:8787/ui#overview');
+          await sleep(1500);
+
+          const scenarios = [
+            { name: 'desktop-dark-overview-1440', width: 1440, height: 1000, theme: 'dark', view: 'overview' },
+            { name: 'desktop-light-providers-1440', width: 1440, height: 1000, theme: 'light', view: 'providers' },
+            { name: 'tablet-dark-models-768', width: 768, height: 1024, theme: 'dark', view: 'models' },
+            { name: 'mobile-light-overview-390', width: 390, height: 844, theme: 'light', view: 'overview' },
+            { name: 'mobile-dark-connection-focus-320', width: 320, height: 700, theme: 'dark', view: 'connection', focus: '#tokenInput' },
+            { name: 'desktop-dark-playground-reduced-motion', width: 1440, height: 900, theme: 'dark', view: 'playground', reducedMotion: true },
+          ];
+          const evidence = [];
+
+          for (const scenario of scenarios) {
+            await send('Emulation.setDeviceMetricsOverride', {
+              width: scenario.width,
+              height: scenario.height,
+              deviceScaleFactor: 1,
+              mobile: scenario.width <= 390,
+            });
+            await send('Emulation.setEmulatedMedia', {
+              features: [
+                {
+                  name: 'prefers-reduced-motion',
+                  value: scenario.reducedMotion ? 'reduce' : 'no-preference',
+                },
+              ],
+            });
+            await evaluate(`
+              (() => {
+                const requestedTheme = ${JSON.stringify(scenario.theme)};
+                if (document.documentElement.dataset.theme !== requestedTheme) {
+                  document.getElementById('themeButton')?.click();
+                }
+                document.querySelector('[data-view-target="${scenario.view}"]')?.click();
+              })()
+            `);
+            await sleep(350);
+            if (scenario.focus) await evaluate(`document.querySelector(${JSON.stringify(scenario.focus)})?.focus()`);
+
+            const measurements = JSON.parse(
+              await evaluate(`JSON.stringify({
+                name: ${JSON.stringify(scenario.name)},
+                view: document.querySelector('.view.is-active')?.getAttribute('data-view'),
+                theme: document.documentElement.dataset.theme,
+                innerWidth,
+                clientWidth: document.documentElement.clientWidth,
+                scrollWidth: document.documentElement.scrollWidth,
+                bodyScrollWidth: document.body.scrollWidth,
+                horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+                activeElement: document.activeElement?.id || document.activeElement?.getAttribute('data-view-target') || document.activeElement?.tagName,
+                reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+                uiFontFamily: getComputedStyle(document.body).fontFamily,
+                monoFontFamily: getComputedStyle(document.querySelector('.technical, .mono, code') || document.body).fontFamily,
+                interLoaded: document.fonts.check('14px Inter'),
+                jetBrainsMonoLoaded: document.fonts.check('14px "JetBrains Mono"'),
+              })`),
+            );
+            evidence.push(measurements);
+            if (measurements.horizontalOverflow) throw new Error(`Horizontal overflow in ${scenario.name}`);
+            if (measurements.view !== scenario.view) throw new Error(`View activation failed for ${scenario.view}`);
+
+            const screenshot = await send('Page.captureScreenshot', {
+              format: 'png',
+              fromSurface: true,
+              captureBeyondViewport: false,
+            });
+            await writeFile(`evidence/${scenario.name}.png`, Buffer.from(screenshot.data, 'base64'));
+          }
+
+          const viewChecks = await evaluate(`
+            (async () => {
+              const results = [];
+              for (const view of ['overview', 'providers', 'models', 'playground', 'traces', 'connection']) {
+                document.querySelector('[data-view-target="' + view + '"]')?.click();
+                await new Promise((resolve) => setTimeout(resolve, 50));
+                results.push({
+                  requested: view,
+                  active: document.querySelector('.view.is-active')?.getAttribute('data-view'),
+                  heading: document.querySelector('.view.is-active h1')?.textContent,
+                });
+              }
+              return results;
+            })()
+          `);
+          if (viewChecks.some((item) => item.requested !== item.active || !item.heading)) {
+            throw new Error(`Six-view navigation check failed: ${JSON.stringify(viewChecks)}`);
+          }
+
+          await writeFile(
+            'evidence/evidence.json',
+            JSON.stringify(
+              {
+                commit: '487f829d7575516f32f6aa370f6d03b276592836',
+                tree: '4a8641fcb5c1d168d557a50879628b333b0f1760',
+                capturedAt: new Date().toISOString(),
+                scenarios: evidence,
+                viewChecks,
+              },
+              null,
+              2,
+            ),
+          );
+          socket.close();
+          NODE
+
+          node "$RUNNER_TEMP/capture.mjs"
+          test "$(find evidence -maxdepth 1 -name '*.png' | wc -l | tr -d ' ')" -eq 6
+          cat evidence/evidence.json
+
+      - name: Upload exact-build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-50-exact-build-visual-evidence
+          path: evidence
+          retention-days: 7
+          if-no-files-found: error
