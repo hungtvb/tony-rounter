@@ -1,0 +1,47 @@
+name: ChatGPT Source Export
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/chatgpt-source-export.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull-request base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Remove transient authorization configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --local --unset-all credential.helper || true
+
+      - name: Package repository with Git history
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/${GITHUB_REPOSITORY#*/}-main-with-git.tar.gz"
+          tar -C "$GITHUB_WORKSPACE" -czf "$ARCHIVE" .
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+
+      - name: Upload short-lived source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-main-with-git
+          path: |
+            ${{ runner.temp }}/${{ github.event.repository.name }}-main-with-git.tar.gz
+            ${{ runner.temp }}/${{ github.event.repository.name }}-main-with-git.tar.gz.sha256
+          retention-days: 1
+          if-no-files-found: error
