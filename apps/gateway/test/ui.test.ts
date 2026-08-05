@@ -239,6 +239,12 @@ describe('local runtime dashboard', () => {
     expect(styles.body).toContain('.routing-list');
     expect(styles.body).toContain('.providers-layout');
     expect(styles.body).toContain('.provider-table');
+    expect(styles.body).toContain('.content { min-width: 0;');
+    expect(styles.body).toContain('.view { min-width: 0;');
+    expect(styles.body).toContain(
+      '.table-shell { min-width: 0; max-width: 100%;',
+    );
+    expect(styles.body).toContain('.table-scroll { width: 100%; min-width: 0;');
     expect(styles.body).toContain('.mobile-nav');
     expect(styles.body).toContain('@media (prefers-reduced-motion: reduce)');
     expect(styles.body).toContain('.control-history');

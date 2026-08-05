@@ -121,8 +121,8 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.8; strok
 .crumbs { min-width: 0; display: flex; align-items: center; gap: var(--space-2); color: var(--color-fg-muted); font-size: 12px; }
 .crumbs strong { overflow: hidden; text-overflow: ellipsis; color: var(--color-fg-primary); font-weight: 650; white-space: nowrap; }
 .topbar-actions { display: flex; align-items: center; gap: var(--space-2); }
-.content { width: 100%; max-width: 1580px; margin: 0 auto; padding: var(--space-8) clamp(20px, 3vw, 40px) var(--space-12); }
-.view { display: none; }
+.content { min-width: 0; width: 100%; max-width: 1580px; margin: 0 auto; padding: var(--space-8) clamp(20px, 3vw, 40px) var(--space-12); }
+.view { min-width: 0; display: none; }
 .view.is-active { display: block; animation: view-in var(--duration-standard) var(--ease-standard); }
 @keyframes view-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -206,8 +206,8 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.8; strok
 .request-result { text-align: right; }
 .request-result strong { color: var(--color-success); font: 650 12px/1.4 var(--font-mono); }
 
-.table-shell { overflow: hidden; border-top: 1px solid var(--color-border-default); }
-.table-scroll { max-width: 100%; overflow-x: auto; }
+.table-shell { min-width: 0; max-width: 100%; overflow: hidden; border-top: 1px solid var(--color-border-default); }
+.table-scroll { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
 table { width: 100%; border-collapse: collapse; min-width: 760px; }
 th, td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--color-border-subtle); vertical-align: middle; }
 th { color: var(--color-fg-muted); font-size: 11px; font-weight: 650; }
