@@ -1,0 +1,46 @@
+name: ChatGPT Source Export
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/chatgpt-source-export.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout exact PR base with full history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Package exact repository with Git history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.base.sha }}"
+          test ! -e .github/workflows/chatgpt-source-export.yml
+          archive="$RUNNER_TEMP/tony-rounter-main-with-git.tar.gz"
+          checksum="$RUNNER_TEMP/tony-rounter-main-with-git.tar.gz.sha256"
+          tar -C "$GITHUB_WORKSPACE" -czf "$archive" .
+          sha256sum "$archive" > "$checksum"
+
+      - name: Upload exact source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tony-rounter-main-with-git
+          path: |
+            ${{ runner.temp }}/tony-rounter-main-with-git.tar.gz
+            ${{ runner.temp }}/tony-rounter-main-with-git.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 1
