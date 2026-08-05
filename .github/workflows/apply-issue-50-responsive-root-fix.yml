@@ -31,8 +31,52 @@ jobs:
           echo 'ef989d0f140fa8ac7d6c074422f5316d0d3bf78d5387b8841288eaa78bcff1f6  '"$RUNNER_TEMP/fix.patch.gz" | sha256sum --check --status
           gzip --decompress --stdout "$RUNNER_TEMP/fix.patch.gz" > "$RUNNER_TEMP/fix.patch"
           echo '3713f56bd417fa4d3d3496d3b363777aafff8a446916fd2f48538b8e716f11c5  '"$RUNNER_TEMP/fix.patch" | sha256sum --check --status
-          git apply --check "$RUNNER_TEMP/fix.patch"
-          git apply "$RUNNER_TEMP/fix.patch"
+          git apply --check --exclude=apps/gateway/test/ui.test.ts "$RUNNER_TEMP/fix.patch"
+          git apply --exclude=apps/gateway/test/ui.test.ts "$RUNNER_TEMP/fix.patch"
+
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/gateway/test/ui.test.ts')
+          source = path.read_text()
+          replacements = [
+              (
+                  "    expect(response.body).toContain('generationList');\n",
+                  "    expect(response.body).toContain('generationList');\n"
+                  "    expect(response.body).toContain(\n"
+                  "      'aria-label=\"Open gateway health endpoint\"',\n"
+                  "    );\n"
+                  "    expect(response.body).toContain('<span>Open /health</span>');\n"
+                  "    expect(response.body).toContain(\n"
+                  "      'aria-label=\"Disconnect local token\"',\n"
+                  "    );\n",
+              ),
+              (
+                  "    expect(styles.body).toContain('.table-scroll { width: 100%; min-width: 0;');\n",
+                  "    expect(styles.body).toContain('.table-scroll { width: 100%; min-width: 0;');\n"
+                  "    expect(styles.body).toContain(\n"
+                  "      '.sidebar-footer .button svg { width: 16px; height: 16px;',\n"
+                  "    );\n"
+                  "    expect(styles.body).toContain(\n"
+                  "      '.sidebar-footer .button { padding: 0; overflow: hidden; }',\n"
+                  "    );\n"
+                  "    expect(styles.body).toContain(\n"
+                  "      '.topbar-actions { min-width: 0; gap: var(--space-1); }',\n"
+                  "    );\n"
+                  "    expect(styles.body).toContain(\n"
+                  "      '.topbar-connection { width: 36px; min-height: 36px;',\n"
+                  "    );\n"
+                  "    expect(styles.body).toContain(\n"
+                  "      '.connection-pill { width: 32px; min-height: 32px;',\n"
+                  "    );\n",
+              ),
+          ]
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f'Expected one exact assertion anchor, found {source.count(old)}')
+              source = source.replace(old, new)
+          path.write_text(source)
+          PY
       - uses: pnpm/action-setup@v4
         with:
           version: 10.14.0
