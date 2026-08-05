@@ -1,0 +1,57 @@
+name: Apply issue 50 responsive root fix
+
+on:
+  pull_request:
+    branches:
+      - feat/issue-50-control-plane-ui
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.head_ref == 'automation/issue-50-responsive-root-fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout automation head
+        uses: actions/checkout@v4
+        with:
+          ref: automation/issue-50-responsive-root-fix
+          fetch-depth: 0
+      - name: Preserve payload and checkout exact product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/issue-50-responsive-root-fix.patch.gz.b64 "$RUNNER_TEMP/fix.patch.gz.b64"
+          echo 'b17ebd42560d9fe074698128ab3dc1a0de12559cf609685855d892eae5b261b5  '"$RUNNER_TEMP/fix.patch.gz.b64" | sha256sum --check --status
+          git checkout --detach 9f928da2fcbe389ec059b50f5f2d0e678aff5f50
+          test "$(git rev-parse HEAD^{tree})" = "2ba17c5a18b34d46b637da27445c7952593b0709"
+          base64 --decode "$RUNNER_TEMP/fix.patch.gz.b64" > "$RUNNER_TEMP/fix.patch.gz"
+          echo 'ef989d0f140fa8ac7d6c074422f5316d0d3bf78d5387b8841288eaa78bcff1f6  '"$RUNNER_TEMP/fix.patch.gz" | sha256sum --check --status
+          gzip --decompress --stdout "$RUNNER_TEMP/fix.patch.gz" > "$RUNNER_TEMP/fix.patch"
+          echo '3713f56bd417fa4d3d3496d3b363777aafff8a446916fd2f48538b8e716f11c5  '"$RUNNER_TEMP/fix.patch" | sha256sum --check --status
+          git apply --check "$RUNNER_TEMP/fix.patch"
+          git apply "$RUNNER_TEMP/fix.patch"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install, format, and verify exact fixed tree
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm format
+          pnpm verify
+      - name: Commit only product files to product branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ChatGPT'
+          git config user.email 'noreply@openai.com'
+          git add apps/gateway/src/ui-assets/html.ts apps/gateway/src/ui-assets/styles-contract.ts apps/gateway/test/ui.test.ts
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" -eq 3
+          git commit -m 'fix(ui): compact tablet navigation chrome'
+          git push origin HEAD:feat/issue-50-control-plane-ui
