@@ -1,0 +1,39 @@
+name: ChatGPT source export issue 60
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.event.pull_request.head.ref == 'automation/source-export-issue-60'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reset to exact base source
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git reset --hard "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          git fsck --full
+          test ! -e .github/workflows/chatgpt-source-export-issue-60.yml
+      - name: Package exact working copy with Git history
+        run: |
+          set -euo pipefail
+          zip -q -r ../tony-rounter-issue-60-source.zip .
+          cd ..
+          sha256sum tony-rounter-issue-60-source.zip > tony-rounter-issue-60-source.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tony-rounter-issue-60-source
+          path: |
+            ../tony-rounter-issue-60-source.zip
+            ../tony-rounter-issue-60-source.zip.sha256
+          retention-days: 1
