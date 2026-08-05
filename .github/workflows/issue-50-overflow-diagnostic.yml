@@ -1,0 +1,200 @@
+name: Issue 50 overflow diagnostic
+
+on:
+  pull_request:
+    branches:
+      - feat/issue-50-control-plane-ui
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'automation/issue-50-visual-evidence'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Assert exact source
+        run: |
+          test "$(git rev-parse HEAD)" = "9f928da2fcbe389ec059b50f5f2d0e678aff5f50"
+          test "$(git rev-parse HEAD^{tree})" = "2ba17c5a18b34d46b637da27445c7952593b0709"
+          test ! -e .github/workflows/issue-50-overflow-diagnostic.yml
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install and build
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Start gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(openssl rand -hex 32)"
+          file_key="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          echo "::add-mask::$file_key"
+          echo "TONY_ROUTER_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "TONY_ROUTER_FILE_ID_KEY=$file_key" >> "$GITHUB_ENV"
+          cat > "$RUNNER_TEMP/router.yaml" <<'YAML'
+          version: 2
+          defaultProfile: coding
+          providers:
+            openai:
+              kind: openai-compatible
+          accounts:
+            personal:
+              provider: openai
+            work:
+              provider: openai
+          models:
+            fast:
+              provider: openai
+              upstreamModel: gpt-5-mini
+              capabilities:
+                tools: true
+                parallelToolCalls: true
+                vision: false
+                structuredOutput: true
+                fileInput: false
+                reasoning: true
+                contextTokens: 128000
+            vision:
+              provider: openai
+              upstreamModel: gpt-5
+              capabilities:
+                tools: true
+                parallelToolCalls: true
+                vision: true
+                structuredOutput: true
+                fileInput: true
+                reasoning: true
+                contextTokens: 200000
+          routes:
+            fast-personal:
+              model: fast
+              account: personal
+              priority: 30
+            fast-work:
+              model: fast
+              account: work
+              priority: 20
+            vision-work:
+              model: vision
+              account: work
+              priority: 10
+          profiles:
+            coding:
+              routes:
+                - route: fast-personal
+                - route: fast-work
+                - route: vision-work
+          YAML
+          cat > "$RUNNER_TEMP/providers.json" <<'JSON'
+          {"version":2,"providers":{"openai":{"baseUrl":"https://api.openai.com/v1","timeoutMs":60000}},"accounts":{"personal":{"provider":"openai","apiKeyEnv":"OPENAI_PERSONAL_KEY"},"work":{"provider":"openai","apiKeyEnv":"OPENAI_WORK_KEY"}}}
+          JSON
+          export TONY_ROUTER_TOKEN="$token"
+          export TONY_ROUTER_FILE_ID_KEY="$file_key"
+          export TONY_ROUTER_HOST=127.0.0.1
+          export TONY_ROUTER_PORT=8787
+          export TONY_ROUTER_ROUTING_CONFIG_FILE="$RUNNER_TEMP/router.yaml"
+          export TONY_ROUTER_PROVIDER_CONFIG_FILE="$RUNNER_TEMP/providers.json"
+          export OPENAI_PERSONAL_KEY=placeholder
+          export OPENAI_WORK_KEY=placeholder
+          node apps/gateway/dist/server.js > "$RUNNER_TEMP/gateway.log" 2>&1 &
+          for attempt in $(seq 1 40); do
+            curl --fail --silent http://127.0.0.1:8787/ui >/dev/null && exit 0
+            sleep 0.25
+          done
+          cat "$RUNNER_TEMP/gateway.log"
+          exit 1
+      - name: Measure overflowing elements at 768px
+        shell: bash
+        run: |
+          set -euo pipefail
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)"
+          "$chrome" --headless=new --no-sandbox --disable-dev-shm-usage --remote-debugging-port=9224 --user-data-dir="$RUNNER_TEMP/chrome-diag" about:blank > "$RUNNER_TEMP/chrome.log" 2>&1 &
+          for attempt in $(seq 1 40); do
+            curl --fail --silent http://127.0.0.1:9224/json/version >/dev/null && break
+            sleep 0.25
+          done
+          cat > "$RUNNER_TEMP/diagnose.mjs" <<'NODE'
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const token = process.env.TONY_ROUTER_TOKEN;
+          const targets = await fetch('http://127.0.0.1:9224/json/list').then((response) => response.json());
+          const target = targets.find((item) => item.type === 'page');
+          const socket = new WebSocket(target.webSocketDebuggerUrl);
+          await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
+          let id = 0;
+          const pending = new Map();
+          socket.addEventListener('message', (event) => {
+            const message = JSON.parse(typeof event.data === 'string' ? event.data : Buffer.from(event.data).toString('utf8'));
+            if (!message.id) return;
+            const entry = pending.get(message.id);
+            if (!entry) return;
+            pending.delete(message.id);
+            message.error ? entry.reject(new Error(JSON.stringify(message.error))) : entry.resolve(message.result);
+          });
+          const send = (method, params = {}) => new Promise((resolve, reject) => { const requestId = ++id; pending.set(requestId, { resolve, reject }); socket.send(JSON.stringify({ id: requestId, method, params })); });
+          const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.value;
+          await send('Page.enable');
+          await send('Runtime.enable');
+          await send('Emulation.setDeviceMetricsOverride', { width: 768, height: 1024, deviceScaleFactor: 1, mobile: false });
+          await send('Page.navigate', { url: 'http://127.0.0.1:8787/ui' });
+          await sleep(1200);
+          await evaluate(`sessionStorage.setItem('tony-router-token', ${JSON.stringify(token)}); sessionStorage.setItem('tony-router-theme', 'dark'); location.reload()`);
+          await sleep(1800);
+          await evaluate(`document.querySelector('[data-view-target="models"]')?.click()`);
+          await sleep(400);
+          const diagnostic = JSON.parse(await evaluate(`JSON.stringify((() => {
+            const describe = (element) => {
+              const rect = element.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              return {
+                tag: element.tagName,
+                id: element.id,
+                className: typeof element.className === 'string' ? element.className : '',
+                rect: { left: rect.left, right: rect.right, width: rect.width },
+                clientWidth: element.clientWidth,
+                scrollWidth: element.scrollWidth,
+                minWidth: style.minWidth,
+                width: style.width,
+                maxWidth: style.maxWidth,
+                overflowX: style.overflowX,
+                display: style.display,
+                gridTemplateColumns: style.gridTemplateColumns,
+                flex: style.flex,
+              };
+            };
+            const viewport = document.documentElement.clientWidth;
+            const selectors = ['html','body','.app-shell','.sidebar','.workspace','.topbar','.content','.view.is-active','.page-heading','.entity-toolbar','.search-field','.table-shell','.table-scroll','.model-table'];
+            const keyElements = selectors.map((selector) => ({ selector, ...describe(document.querySelector(selector)) }));
+            const offenders = [...document.querySelectorAll('body *')]
+              .filter((element) => {
+                const rect = element.getBoundingClientRect();
+                return rect.right > viewport + 0.5 || rect.left < -0.5;
+              })
+              .map(describe)
+              .sort((a, b) => (b.rect.right - viewport) - (a.rect.right - viewport))
+              .slice(0, 40);
+            return {
+              viewport,
+              documentScrollWidth: document.documentElement.scrollWidth,
+              bodyScrollWidth: document.body.scrollWidth,
+              scrollingElement: document.scrollingElement?.tagName,
+              keyElements,
+              offenders,
+            };
+          })())`));
+          console.log(JSON.stringify(diagnostic, null, 2));
+          socket.close();
+          setTimeout(() => process.exit(0), 100);
+          NODE
+          timeout 60s node "$RUNNER_TEMP/diagnose.mjs"
