@@ -21,6 +21,19 @@ export { GatewayHttpError } from './errors.js';
 export { createJsonLogger, createNullLogger } from './logger.js';
 export type { JsonLogger, JsonLoggerOptions } from './logger.js';
 export { OpenAICompatibleClient } from './openai/client.js';
+export {
+  filePurpose,
+  normalizeDeletedFile,
+  normalizeFileObject,
+  uploadContentType,
+  uploadedFilename,
+} from './openai/files.js';
+export type {
+  CanonicalDeletedFile,
+  CanonicalFileObject,
+  FilePurpose,
+  ProviderFileUpload,
+} from './openai/files.js';
 export type {
   ChatCompletionResult,
   OpenAICompatibleProvider,
@@ -44,6 +57,15 @@ export {
 } from './openai/responses.js';
 export type { ResponsesRequest } from './openai/responses.js';
 export {
+  resolveVirtualFileIds,
+  VirtualFileIdCodec,
+} from './openai/virtual-file-id.js';
+export type {
+  ResolvedVirtualFileRequest,
+  VirtualFileIdentity,
+  VirtualFileOwner,
+} from './openai/virtual-file-id.js';
+export {
   GatewayRouterConfigError,
   loadGatewayRouterConfig,
   parseGatewayRouterSources,
@@ -64,6 +86,7 @@ export type {
   RoutedChatCompletionResult,
   RoutedChatRequestContext,
   RoutedOpenAIProviderOptions,
+  RoutedFileResult,
 } from './routing/provider.js';
 export { createGracefulShutdown, installSignalHandlers } from './shutdown.js';
 export type { ShutdownResult } from './shutdown.js';

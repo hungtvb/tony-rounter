@@ -8,6 +8,7 @@ import { GatewayConfigError, loadGatewayConfig } from '../src/index.js';
 
 const TOKEN = 'configured-token-'.padEnd(48, 'y');
 const UPSTREAM_KEY = 'upstream-key-'.padEnd(48, 'z');
+const FILE_ID_KEY = 'file-id-key-'.padEnd(48, 'f');
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -23,19 +24,60 @@ describe('loadGatewayConfig', () => {
     const directory = await mkdtemp(join(tmpdir(), 'tony-router-'));
     temporaryDirectories.push(directory);
     const tokenFile = join(directory, 'credentials', 'token');
+    const fileIdKeyFile = join(directory, 'credentials', 'file-id-key');
 
-    const first = await loadGatewayConfig({ env: {}, tokenFile });
-    const second = await loadGatewayConfig({ env: {}, tokenFile });
+    const first = await loadGatewayConfig({
+      env: {},
+      tokenFile,
+      fileIdKeyFile,
+    });
+    const second = await loadGatewayConfig({
+      env: {},
+      tokenFile,
+      fileIdKeyFile,
+    });
 
     expect(first.tokenSource).toBe('generated');
     expect(second.tokenSource).toBe('file');
     expect(second.token).toBe(first.token);
     expect(first.token).toHaveLength(43);
+    expect(first.fileIdKeySource).toBe('generated');
+    expect(second.fileIdKeySource).toBe('file');
+    expect(second.fileIdKey).toBe(first.fileIdKey);
+    expect(first.fileIdKey).toHaveLength(43);
 
     if (process.platform !== 'win32') {
-      const metadata = await stat(tokenFile);
-      expect(metadata.mode & 0o777).toBe(0o600);
+      const tokenMetadata = await stat(tokenFile);
+      const fileIdKeyMetadata = await stat(fileIdKeyFile);
+      expect(tokenMetadata.mode & 0o777).toBe(0o600);
+      expect(fileIdKeyMetadata.mode & 0o777).toBe(0o600);
     }
+  });
+
+  it('requires the server-only file ID key to differ from the client bearer token', async () => {
+    await expect(
+      loadGatewayConfig({
+        env: {
+          TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: TOKEN,
+        },
+      }),
+    ).rejects.toThrow(
+      'TONY_ROUTER_FILE_ID_KEY must differ from TONY_ROUTER_TOKEN',
+    );
+  });
+
+  it('rejects malformed server-only file ID keys', async () => {
+    await expect(
+      loadGatewayConfig({
+        env: {
+          TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: 'too-short',
+        },
+      }),
+    ).rejects.toThrow(
+      'TONY_ROUTER_FILE_ID_KEY must contain between 32 and 512 characters',
+    );
   });
 
   it('rejects non-loopback binding unless explicitly enabled', async () => {
@@ -44,6 +86,7 @@ describe('loadGatewayConfig', () => {
         env: {
           TONY_ROUTER_HOST: '0.0.0.0',
           TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
         },
       }),
     ).rejects.toThrow(GatewayConfigError);
@@ -55,6 +98,7 @@ describe('loadGatewayConfig', () => {
         TONY_ROUTER_HOST: '0.0.0.0',
         TONY_ROUTER_ALLOW_NON_LOOPBACK: 'true',
         TONY_ROUTER_TOKEN: TOKEN,
+        TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
         TONY_ROUTER_PORT: '9000',
       },
     });
@@ -71,6 +115,7 @@ describe('loadGatewayConfig', () => {
     const resolved = await loadGatewayConfig({
       env: {
         TONY_ROUTER_TOKEN: TOKEN,
+        TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
         TONY_ROUTER_UPSTREAM_BASE_URL: 'http://127.0.0.1:9001/v1/',
         TONY_ROUTER_UPSTREAM_API_KEY: UPSTREAM_KEY,
         TONY_ROUTER_UPSTREAM_TIMEOUT_MS: '1234',
@@ -92,6 +137,7 @@ describe('loadGatewayConfig', () => {
       loadGatewayConfig({
         env: {
           TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
           TONY_ROUTER_UPSTREAM_BASE_URL: 'http://example.com/v1',
         },
       }),
@@ -103,6 +149,7 @@ describe('loadGatewayConfig', () => {
       loadGatewayConfig({
         env: {
           TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
           TONY_ROUTER_UPSTREAM_API_KEY: UPSTREAM_KEY,
         },
       }),
@@ -114,6 +161,7 @@ describe('loadGatewayConfig', () => {
       loadGatewayConfig({
         env: {
           TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
           TONY_ROUTER_PORT: '12.5',
         },
       }),
@@ -123,6 +171,7 @@ describe('loadGatewayConfig', () => {
       loadGatewayConfig({
         env: {
           TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
           TONY_ROUTER_ALLOW_NON_LOOPBACK: 'yes',
         },
       }),
@@ -139,6 +188,7 @@ describe('loadGatewayConfig', () => {
     const resolved = await loadGatewayConfig({
       env: {
         TONY_ROUTER_TOKEN: TOKEN,
+        TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
         TONY_ROUTER_CONTROL_DIR: directory,
       },
     });
@@ -148,6 +198,7 @@ describe('loadGatewayConfig', () => {
       loadGatewayConfig({
         env: {
           TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
           TONY_ROUTER_CONTROL_DIR: 'relative/control',
         },
       }),
@@ -157,6 +208,7 @@ describe('loadGatewayConfig', () => {
       loadGatewayConfig({
         env: {
           TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
           TONY_ROUTER_HOST: '0.0.0.0',
           TONY_ROUTER_ALLOW_NON_LOOPBACK: 'true',
           TONY_ROUTER_CONTROL_DIR: directory,
@@ -175,6 +227,7 @@ describe('loadGatewayConfig', () => {
       loadGatewayConfig({
         env: {
           TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
           TONY_ROUTER_CONTROL_DIR: directory,
           TONY_ROUTER_ROUTING_CONFIG_FILE: '/tmp/router.yaml',
           TONY_ROUTER_PROVIDER_CONFIG_FILE: '/tmp/providers.json',
@@ -186,6 +239,7 @@ describe('loadGatewayConfig', () => {
       loadGatewayConfig({
         env: {
           TONY_ROUTER_TOKEN: TOKEN,
+          TONY_ROUTER_FILE_ID_KEY: FILE_ID_KEY,
           TONY_ROUTER_CONTROL_DIR: directory,
           TONY_ROUTER_UPSTREAM_BASE_URL: 'https://api.example.test/v1',
         },

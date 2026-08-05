@@ -27,6 +27,9 @@ export interface GatewayConfig {
   readonly token: string;
   readonly tokenFile: string;
   readonly tokenSource: 'environment' | 'file' | 'generated';
+  readonly fileIdKey?: string;
+  readonly fileIdKeyFile?: string;
+  readonly fileIdKeySource?: 'environment' | 'file' | 'generated';
   readonly bodyLimitBytes: number;
   readonly requestTimeoutMs: number;
   readonly shutdownGraceMs: number;
@@ -38,6 +41,7 @@ export interface GatewayConfig {
 export interface LoadGatewayConfigOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly tokenFile?: string;
+  readonly fileIdKeyFile?: string;
 }
 
 function parseBoolean(name: string, value: string | undefined): boolean {
@@ -78,6 +82,21 @@ function validateToken(token: string): string {
   if (/\s/.test(normalized)) {
     throw new GatewayConfigError(
       'TONY_ROUTER_TOKEN must not contain whitespace',
+    );
+  }
+  return normalized;
+}
+
+function validateFileIdKey(value: string): string {
+  const normalized = value.trim();
+  if (normalized.length < 32 || normalized.length > 512) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_FILE_ID_KEY must contain between 32 and 512 characters',
+    );
+  }
+  if (/\s/.test(normalized)) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_FILE_ID_KEY must not contain whitespace',
     );
   }
   return normalized;
@@ -234,6 +253,33 @@ async function loadOrCreateToken(
   return { token: existing, source: 'file' };
 }
 
+async function loadOrCreateFileIdKey(
+  file: string,
+): Promise<{ key: string; source: 'file' | 'generated' }> {
+  const directory = dirname(file);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await bestEffortChmod(directory, 0o700);
+  const generated = randomBytes(32).toString('base64url');
+
+  try {
+    const handle = await open(file, 'wx', 0o600);
+    try {
+      await handle.writeFile(`${generated}\n`, { encoding: 'utf8' });
+    } finally {
+      await handle.close();
+    }
+    await bestEffortChmod(file, 0o600);
+    return { key: generated, source: 'generated' };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EEXIST') throw error;
+  }
+
+  const existing = validateFileIdKey(await readFile(file, 'utf8'));
+  await bestEffortChmod(file, 0o600);
+  return { key: existing, source: 'file' };
+}
+
 export async function loadGatewayConfig(
   options: LoadGatewayConfigOptions = {},
 ): Promise<GatewayConfig> {
@@ -254,6 +300,10 @@ export async function loadGatewayConfig(
     options.tokenFile ??
     env.TONY_ROUTER_TOKEN_FILE ??
     join(homedir(), '.tony-router', 'token');
+  const fileIdKeyFile =
+    options.fileIdKeyFile ??
+    env.TONY_ROUTER_FILE_ID_KEY_FILE ??
+    join(homedir(), '.tony-router', 'file-id-key');
 
   const credential = env.TONY_ROUTER_TOKEN
     ? {
@@ -261,6 +311,17 @@ export async function loadGatewayConfig(
         source: 'environment' as const,
       }
     : await loadOrCreateToken(tokenFile);
+  const fileIdCredential = env.TONY_ROUTER_FILE_ID_KEY
+    ? {
+        key: validateFileIdKey(env.TONY_ROUTER_FILE_ID_KEY),
+        source: 'environment' as const,
+      }
+    : await loadOrCreateFileIdKey(fileIdKeyFile);
+  if (fileIdCredential.key === credential.token) {
+    throw new GatewayConfigError(
+      'TONY_ROUTER_FILE_ID_KEY must differ from TONY_ROUTER_TOKEN',
+    );
+  }
   const controlDir = loadControlDirectory(env, host);
   const upstream = loadUpstreamConfig(env);
 
@@ -277,6 +338,9 @@ export async function loadGatewayConfig(
     token: credential.token,
     tokenFile,
     tokenSource: credential.source,
+    fileIdKey: fileIdCredential.key,
+    fileIdKeyFile,
+    fileIdKeySource: fileIdCredential.source,
     bodyLimitBytes: parseInteger(
       'TONY_ROUTER_BODY_LIMIT_BYTES',
       env.TONY_ROUTER_BODY_LIMIT_BYTES,

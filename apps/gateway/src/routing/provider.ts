@@ -19,6 +19,11 @@ import {
   type ProviderRequestContext,
 } from '../openai/client.js';
 import type {
+  CanonicalDeletedFile,
+  CanonicalFileObject,
+  ProviderFileUpload,
+} from '../openai/files.js';
+import type {
   CanonicalModelList,
   ChatCompletionRequest,
 } from '../openai/protocol.js';
@@ -37,6 +42,10 @@ function compareIdentifier(left: string, right: string): number {
 export interface RoutedChatRequestContext extends ProviderRequestContext {
   readonly replaySafe: boolean;
   readonly sessionId?: string;
+  readonly requiredFileOwner?: Readonly<{
+    accountId: string;
+    providerId: string;
+  }>;
 }
 
 export interface RoutedChatCompletionResult {
@@ -44,6 +53,12 @@ export interface RoutedChatCompletionResult {
   readonly route: SelectedRoute;
   readonly attempts: number;
   readonly trace: readonly ExecutionTraceEvent[];
+}
+
+export interface RoutedFileResult<T> {
+  readonly result: T;
+  readonly accountId: string;
+  readonly providerId: string;
 }
 
 export type AccountHealthStatus =
@@ -220,6 +235,37 @@ function accountConfigs(
   );
 }
 
+function requiredAccountRouteStates(
+  config: GatewayRouterConfig,
+  owner: NonNullable<RoutedChatRequestContext['requiredFileOwner']>,
+): Readonly<Record<string, Readonly<{ available: boolean }>>> {
+  if (
+    !ACCOUNT_ID_PATTERN.test(owner.accountId) ||
+    !ACCOUNT_ID_PATTERN.test(owner.providerId)
+  ) {
+    throw new GatewayHttpError(
+      400,
+      'invalid_file_id',
+      'The supplied file ID is invalid for this Tony Router instance',
+    );
+  }
+  const account = config.registry.accounts[owner.accountId];
+  if (!account || account.providerId !== owner.providerId) {
+    throw new GatewayHttpError(
+      400,
+      'invalid_file_id',
+      'The supplied file ID is invalid for this Tony Router instance',
+    );
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      Object.values(config.registry.routes)
+        .filter((route) => route.accountId !== owner.accountId)
+        .map((route) => [route.id, Object.freeze({ available: false })]),
+    ),
+  );
+}
+
 export class RoutedOpenAIProvider {
   readonly #config: GatewayRouterConfig;
   readonly #accounts: Readonly<Record<string, OpenAICompatibleProvider>>;
@@ -376,6 +422,78 @@ export class RoutedOpenAIProvider {
     }
   }
 
+  async createFile(
+    accountId: string,
+    upload: ProviderFileUpload,
+    context: ProviderRequestContext,
+  ): Promise<RoutedFileResult<CanonicalFileObject>> {
+    const target = this.#fileAccount(accountId, 'createFile');
+    const result = await target.provider.createFile!(upload, context);
+    return Object.freeze({
+      result,
+      accountId,
+      providerId: target.providerId,
+    });
+  }
+
+  async deleteFile(
+    accountId: string,
+    providerId: string,
+    fileId: string,
+    context: ProviderRequestContext,
+  ): Promise<RoutedFileResult<CanonicalDeletedFile>> {
+    const target = this.#fileAccount(accountId, 'deleteFile', providerId);
+    const result = await target.provider.deleteFile!(fileId, context);
+    return Object.freeze({
+      result,
+      accountId,
+      providerId: target.providerId,
+    });
+  }
+
+  #fileAccount(
+    accountId: string,
+    operation: 'createFile' | 'deleteFile',
+    expectedProviderId?: string,
+  ): Readonly<{ providerId: string; provider: OpenAICompatibleProvider }> {
+    if (!ACCOUNT_ID_PATTERN.test(accountId)) {
+      throw new GatewayHttpError(
+        400,
+        'invalid_account_id',
+        'Account ID is invalid',
+      );
+    }
+    const account = this.#config.registry.accounts[accountId];
+    const provider = this.#accounts[accountId];
+    if (!account || !provider) {
+      throw new GatewayHttpError(
+        expectedProviderId ? 400 : 404,
+        expectedProviderId ? 'invalid_file_id' : 'account_not_found',
+        expectedProviderId
+          ? 'The supplied file ID is invalid for this Tony Router instance'
+          : 'The requested routing account does not exist',
+      );
+    }
+    if (
+      expectedProviderId !== undefined &&
+      account.providerId !== expectedProviderId
+    ) {
+      throw new GatewayHttpError(
+        400,
+        'invalid_file_id',
+        'The supplied file ID is invalid for this Tony Router instance',
+      );
+    }
+    if (typeof provider[operation] !== 'function') {
+      throw new GatewayHttpError(
+        501,
+        'files_api_not_supported',
+        'The selected provider account does not support the Files API',
+      );
+    }
+    return Object.freeze({ providerId: account.providerId, provider });
+  }
+
   async createChatCompletion(
     request: ChatCompletionRequest,
     context: RoutedChatRequestContext,
@@ -397,7 +515,7 @@ export class RoutedOpenAIProvider {
 
     try {
       const reservedOutputTokens = outputReserve(request);
-      const execution = await executeRoutedRequest({
+      const execution = await executeRoutedRequest<ChatCompletionResult>({
         config: this.#config.registry,
         profileId: request.model,
         requiredCapabilities: deriveChatRequestCapabilities(request, {
@@ -405,6 +523,14 @@ export class RoutedOpenAIProvider {
             ? { reservedOutputTokens }
             : {}),
         }),
+        ...(context.requiredFileOwner
+          ? {
+              routeStates: requiredAccountRouteStates(
+                this.#config,
+                context.requiredFileOwner,
+              ),
+            }
+          : {}),
         operation: async ({ route, signal }) => {
           const provider = this.#accounts[route.accountId];
           if (!provider) {

@@ -289,6 +289,19 @@ function pdfFileData(value: unknown): string {
   return value;
 }
 
+function inputFileId(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 4096 ||
+    value !== value.trim() ||
+    /\s/.test(value)
+  ) {
+    return invalid('input_file file_id must be a bounded non-empty token');
+  }
+  return value;
+}
+
 function inputFilePart(part: JsonRecord): JsonRecord {
   unsupportedKeys(part, INPUT_FILE_KEYS, 'input_file');
 
@@ -306,9 +319,28 @@ function inputFilePart(part: JsonRecord): JsonRecord {
     );
   }
   if (part.file_id !== undefined && part.file_id !== null) {
-    return unsupported(
-      'input_file file_id requires provider-account ownership and is not implemented in this phase',
-    );
+    if (part.filename !== undefined && part.filename !== null) {
+      return unsupported(
+        'input_file filename cannot be combined with a virtual file_id',
+      );
+    }
+    if (part.detail !== undefined && part.detail !== null) {
+      return unsupported(
+        'input_file detail cannot be represented by Chat Completions in this phase',
+      );
+    }
+    if (
+      part.prompt_cache_breakpoint !== undefined &&
+      part.prompt_cache_breakpoint !== null
+    ) {
+      return unsupported(
+        'input_file prompt_cache_breakpoint is not implemented in this phase',
+      );
+    }
+    return {
+      type: 'file',
+      file: { file_id: inputFileId(part.file_id) },
+    };
   }
   if (part.file_url !== undefined && part.file_url !== null) {
     return unsupported(

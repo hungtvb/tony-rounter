@@ -4,6 +4,13 @@ import type { OpenAIUpstreamConfig } from '../config.js';
 import { GatewayHttpError } from '../errors.js';
 import type { JsonLogger } from '../logger.js';
 import {
+  normalizeDeletedFile,
+  normalizeFileObject,
+  type CanonicalDeletedFile,
+  type CanonicalFileObject,
+  type ProviderFileUpload,
+} from './files.js';
+import {
   type CanonicalModelList,
   type ChatCompletionRequest,
   normalizeChatCompletionResponse,
@@ -38,6 +45,14 @@ export type ChatCompletionResult =
 
 export interface OpenAICompatibleProvider {
   listModels(context: ProviderRequestContext): Promise<CanonicalModelList>;
+  createFile?(
+    upload: ProviderFileUpload,
+    context: ProviderRequestContext,
+  ): Promise<CanonicalFileObject>;
+  deleteFile?(
+    fileId: string,
+    context: ProviderRequestContext,
+  ): Promise<CanonicalDeletedFile>;
   createChatCompletion(
     request: ChatCompletionRequest,
     context: ProviderRequestContext,
@@ -116,7 +131,7 @@ function createAbortScope(
 
 function endpoint(
   baseUrl: string,
-  resource: 'models' | 'chat/completions',
+  resource: 'models' | 'files' | `files/${string}` | 'chat/completions',
 ): string {
   const url = new URL(`${baseUrl}/`);
   const basePath = url.pathname.replace(/\/+$/, '');
@@ -478,6 +493,106 @@ export class OpenAICompatibleClient implements OpenAICompatibleProvider {
         durationMs: Date.now() - startedAt,
       });
       return models;
+    } catch (error) {
+      throw mappedTransportError(error, scope);
+    } finally {
+      scope.cleanup();
+    }
+  }
+
+  async createFile(
+    upload: ProviderFileUpload,
+    context: ProviderRequestContext,
+  ): Promise<CanonicalFileObject> {
+    const scope = createAbortScope(context.signal, this.config.timeoutMs);
+    const startedAt = Date.now();
+    this.logger.info('upstream_request_started', {
+      requestId: context.requestId,
+      operation: 'create_file',
+      bytes: upload.bytes.byteLength,
+      purpose: upload.purpose,
+    });
+
+    try {
+      const form = new FormData();
+      form.append('purpose', upload.purpose);
+      form.append(
+        'file',
+        new Blob([Buffer.from(upload.bytes)], { type: upload.contentType }),
+        upload.filename,
+      );
+      const response = await fetch(endpoint(this.config.baseUrl, 'files'), {
+        method: 'POST',
+        headers: this.headers(),
+        body: form,
+        redirect: 'error',
+        signal: scope.signal,
+      });
+      if (!response.ok) {
+        throw await upstreamFailure(response, scope, this.config.apiKey);
+      }
+      const text = await readBoundedText(
+        response,
+        MAX_JSON_RESPONSE_BYTES,
+        scope,
+      );
+      const file = normalizeFileObject(
+        parseJson(text, 'Upstream returned malformed file JSON'),
+      );
+      this.logger.info('upstream_request_completed', {
+        requestId: context.requestId,
+        operation: 'create_file',
+        statusCode: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return file;
+    } catch (error) {
+      throw mappedTransportError(error, scope);
+    } finally {
+      scope.cleanup();
+    }
+  }
+
+  async deleteFile(
+    fileId: string,
+    context: ProviderRequestContext,
+  ): Promise<CanonicalDeletedFile> {
+    const scope = createAbortScope(context.signal, this.config.timeoutMs);
+    const startedAt = Date.now();
+    this.logger.info('upstream_request_started', {
+      requestId: context.requestId,
+      operation: 'delete_file',
+    });
+
+    try {
+      const response = await fetch(
+        endpoint(this.config.baseUrl, `files/${encodeURIComponent(fileId)}`),
+        {
+          method: 'DELETE',
+          headers: this.headers(),
+          redirect: 'error',
+          signal: scope.signal,
+        },
+      );
+      if (!response.ok) {
+        throw await upstreamFailure(response, scope, this.config.apiKey);
+      }
+      const text = await readBoundedText(
+        response,
+        MAX_JSON_RESPONSE_BYTES,
+        scope,
+      );
+      const deleted = normalizeDeletedFile(
+        parseJson(text, 'Upstream returned malformed file deletion JSON'),
+        fileId,
+      );
+      this.logger.info('upstream_request_completed', {
+        requestId: context.requestId,
+        operation: 'delete_file',
+        statusCode: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return deleted;
     } catch (error) {
       throw mappedTransportError(error, scope);
     } finally {
